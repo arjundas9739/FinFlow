@@ -1417,14 +1417,16 @@ function parseSMS(text) {
 
   // 0. Pre-cleaning: Strip Avl bal / Available balance AND customer care disclaimers (Not You? Call 1800...)
   let cleanedText = text
+  // Clean text by stripping balance disclaimers and block notices
+  const cleanedText = text
     .split(/(?:Avl|Available|Net)\s*(?:bal|balance)\s*:?/i)[0]
-    .split(/(?:Not\s*You\?|Call\s*1800|SMS\s*BLOCK)/i)[0]
+    .split(/(?:Not\s*You\?|Call\s*1800|SMS\s*BLOCK|Cheque\s+deposits)/i)[0]
     .trim();
 
-  // 1. Amount Extraction (supports Rs, Rs., INR, ₹, Amt, Amount)
+  // 1. Amount Extraction
   const amtPatterns = [
     /(?:Rs\.?|INR|₹|Amt\.?|Amount)\s*:?\s*([\d,]+\.?\d*)/i,
-    /(?:debited|credited|paid|received|spent|transferred|sent|withdrawn|deducted|payment|txn)\s+(?:for\s+)?(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /(?:deposited|credited|debited|paid|spent|transferred|sent|withdrawn|deducted|payment|txn)\s+(?:in|to|from|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
     /([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i,
     /(?:VPA|UPI|Ref)\s+[\w@.-]+\s+for\s+([\d,]+\.?\d*)/i,
     /(?:by|for|of)\s+(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i
@@ -1441,79 +1443,143 @@ function parseSMS(text) {
   if (!amount) return null;
 
   // 2. Credit vs Debit Classification
-  const isCredit = /\bcredited\b|\bcredit\b|\breceived\b|\bsalary\b|\badded\b|\bdeposit\b|\brefund\b|\bcashback\b|\binterest\b|\bdividend\b|\binward\b/i.test(cleanedText);
-  const isDebit = /\bdebited\b|\bdebit\b|\bdeducted\b|\bpaid\b|\bspent\b|\bpurchase\b|\bwithdrawn\b|\bpayment\b|\bemi\b|\btransferred\b|\bsent\b|\btxn\b|\bdr\b/i.test(cleanedText);
+  const isCredit = /\b(?:deposited|deposited in|credited|credited to|credited in|credit|received|salary|added|refund|cashback|interest|dividend|inward)\b/i.test(cleanedText) ||
+                   /\bCr-|\bCr\b/i.test(cleanedText);
 
-  let type = 'expense'; // Debits by default
+  const isDebit = /\b(?:debited|debited from|debit|dr|spent|spent on|paid|paid to|deducted|withdrawn|wdl|purchase)\b/i.test(cleanedText);
+
+  let type = 'expense';
   if (isCredit && !isDebit) {
-    type = 'income'; // Credits
-  } else if (/\bemi\b|\bloan repayment\b|\bhousing loan\b|\bcar loan\b|\bpersonal loan\b/i.test(cleanedText)) {
+    type = 'income';
+  } else if (isCredit && isDebit) {
+    if (/\b(?:deposited|credited|received|salary|refund)\b/i.test(cleanedText)) {
+      type = 'income';
+    }
+  }
+
+  if (/\b(?:emi|loan repayment|home loan|car loan|personal loan)\b/i.test(cleanedText)) {
     type = 'loan';
-  } else if (/\bmutual fund\b|\bsip\b|\bgroww\b|\bzerodha\b|\bupstox\b|\bcoin\b|\bclearing corp\b|\bindian clearing\b/i.test(cleanedText)) {
+  } else if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing)\b/i.test(cleanedText)) {
     type = 'investment';
-  } else if (/\bemergency fund\b|\brecurring deposit\b|\bfd\b|\brd\b|\bfixed deposit\b/i.test(cleanedText)) {
+  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit)\b/i.test(cleanedText)) {
     type = 'savings';
   }
 
   // 3. Merchant / Description Extraction
   let description = '';
-  const descPatterns = [
-    /(?:info:|towards|at|to|from|for|via)\s+([A-Za-z0-9\s&'.-]{2,35}?)(?:\.|\s+on|\s+ref|\s+vpa|\s+a\/c|\s+bal|\s+umrn|$)/i,
-    /UPI[\s\/-]+(?:to|from)?\s*([A-Za-z0-9\s]{2,25})/i,
-    /(?:VPA)\s+([A-Za-z0-9@._-]{3,30})/i
-  ];
-  for (const p of descPatterns) {
-    const m = cleanedText.match(p);
-    if (m && m[1]) {
-      let cleaned = m[1].replace(/^(a\/c|account|ref|txn|val|bal|bank)\b/i, '').trim();
-      if (cleaned.length >= 2 && !/^\d+$/.test(cleaned) && !/^(hdfc|sbi|icici|axis|bank)$/i.test(cleaned)) {
-        description = cleaned;
-        break;
+
+  // NEFT / RTGS pattern: e.g. "for NEFT Cr-SBIN0004266-ACTEVIA TECHNOLOGY SERVICES PRIVATE-Venkatesh K V..."
+  const neftMatch = cleanedText.match(/NEFT\s+(?:Cr|Dr)-[A-Z0-9]+-([A-Za-z0-9\s&'.-]+?)(?:-[A-Za-z0-9]+|$)/i) ||
+                    cleanedText.match(/(?:NEFT|RTGS|IMPS)[-\s\w]*?-([A-Za-z0-9\s&'.-]+?)(?:-[A-Z0-9]+|\.|$)/i);
+  if (neftMatch && neftMatch[1]) {
+    let rawDesc = neftMatch[1].trim();
+    if (rawDesc.length >= 3 && !/^(Cr|Dr|SBIN\d+)$/i.test(rawDesc)) {
+      description = rawDesc;
+    }
+  }
+
+  // IMPS pattern: e.g. "IMPS-67890123-AMAZON REFUND"
+  if (!description) {
+    const impsMatch = cleanedText.match(/IMPS(?:-Cr|-Dr)?-\d+-([A-Za-z0-9\s&'.-]+)/i);
+    if (impsMatch && impsMatch[1]) {
+      description = impsMatch[1].trim();
+    }
+  }
+
+  // UPI pattern: e.g. "info UPI/123456/Company/company@icici" or "to VPA merchant@paytm"
+  if (!description) {
+    const upiMatch = cleanedText.match(/info\s+UPI\/[^\/]+\/([^\/]+)/i) ||
+                     cleanedText.match(/(?:to|from)\s+VPA\s+([A-Za-z0-9._-]+)/i);
+    if (upiMatch && upiMatch[1]) {
+      description = upiMatch[1].trim();
+    }
+  }
+
+  // Card / Merchant pattern: e.g. "Card 4066 At WWW AMAZON IN On" or "at RELIANCE RETAIL"
+  if (!description) {
+    const cardMatch = cleanedText.match(/(?:at|at\s+WWW\.?)\s+([A-Za-z0-9\s&'.-]{2,30}?)(?:\s+on|\s+ref|\.|$)/i);
+    if (cardMatch && cardMatch[1]) {
+      let rawDesc = cardMatch[1].trim();
+      if (!/^(HDFC|Bank|Card|A\/C)$/i.test(rawDesc)) {
+        description = rawDesc;
       }
     }
   }
 
-  // 4. Date Extraction (DD-MM-YYYY, YYYY-MM-DD, DD/MM/YY, DD Mon YYYY, DD-MM)
+  // ATM pattern: e.g. "ATM WDL - HDFC BANK ATM BANGALORE"
+  if (!description && /ATM/i.test(cleanedText)) {
+    const atmMatch = cleanedText.match(/ATM\s+(?:WDL\s*-\s*)?([A-Za-z0-9\s.-]+)/i);
+    if (atmMatch && atmMatch[1]) {
+      description = atmMatch[1].trim();
+    }
+  }
+
+  // Generic "for [Description]" pattern
+  if (!description) {
+    const forMatch = cleanedText.match(/for\s+([A-Za-z0-9\s&'.-]{2,35}?)(?:\.|\s+on|\s+ref|$)/i);
+    if (forMatch && forMatch[1]) {
+      description = forMatch[1].trim();
+    }
+  }
+
+  if (!description) {
+    description = type === 'income' ? 'Bank Deposit' : (type === 'loan' ? 'EMI Payment' : 'Bank Payment');
+  }
+
+  // 4. Date Extraction (Supports 01-SEP-26, 01-Sep-2026, 2026-09-11, 12/09/2026)
   let date = todayStr();
-  const datePats = [
-    /(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/,
-    /(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/,
-    /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\/]?\s*\d{0,4})/i,
-    /(\d{1,2}[-\/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\/]\d{2,4})/i,
-    /(\d{1,2}[-\/]\d{1,2})/
-  ];
-  for (const p of datePats) {
-    const m = cleanedText.match(p);
-    if (m) {
-      try {
-        let rawDate = m[1];
-        if (/^\d{1,2}[-\/]\d{1,2}$/.test(rawDate)) {
-          const yr = new Date().getFullYear();
-          rawDate = `${rawDate}-${yr}`;
-        }
-        const d = new Date(rawDate);
-        if (!isNaN(d.getTime())) date = d.toISOString().slice(0, 10);
-      } catch (e) {}
-      break;
+  const monthMap = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+
+  // DD-MMM-YY or DD-MMM-YYYY (e.g. 01-SEP-26, 01-Sep-2026)
+  const dMmmMatch = cleanedText.match(/\b(\d{1,2})[-\s\/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\s\/](\d{2,4})\b/i);
+  if (dMmmMatch) {
+    const day = String(dMmmMatch[1]).padStart(2, '0');
+    const month = monthMap[dMmmMatch[2].toLowerCase().slice(0, 3)];
+    let yr = dMmmMatch[3];
+    if (yr.length === 2) yr = '20' + yr;
+    date = `${yr}-${month}-${day}`;
+  } else {
+    // YYYY-MM-DD
+    const dYmdMatch = cleanedText.match(/\b(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})\b/);
+    if (dYmdMatch) {
+      date = `${dYmdMatch[1]}-${String(dYmdMatch[2]).padStart(2, '0')}-${String(dYmdMatch[3]).padStart(2, '0')}`;
+    } else {
+      // DD-MM-YYYY or DD/MM/YYYY or DD-MM-YY
+      const dDmyMatch = cleanedText.match(/\b(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})\b/);
+      if (dDmyMatch) {
+        const day = String(dDmyMatch[1]).padStart(2, '0');
+        const month = String(dDmyMatch[2]).padStart(2, '0');
+        let yr = dDmyMatch[3];
+        if (yr.length === 2) yr = '20' + yr;
+        date = `${yr}-${month}-${day}`;
+      }
     }
   }
 
   // 5. Smart Category Matcher
-  let category = type === 'income' ? 'salary' : (type === 'loan' ? 'emi' : (type === 'investment' ? 'mutual_fund' : 'other_exp'));
-  const catKw = {
-    food: /zomato|swiggy|restaurant|cafe|food|dining|pizza|burger|blinkit|zepto|bigbasket|groceries|d-mart|dmart|instamart|starbucks/i,
-    transport: /uber|ola|petrol|fuel|cab|taxi|metro|toll|rapido|bpcl|hpcl|iocl|fastag/i,
-    shopping: /amazon|flipkart|myntra|mall|store|mart|meesho|nykaa|ajio|zara|tata cliq|retail|department/i,
-    health: /pharmacy|medical|hospital|clinic|doctor|apollo|pharmeasy|1mg|lab|diagnostic/i,
-    utilities: /electricity|water|broadband|wifi|internet|bsnl|airtel|jio|bill|recharge|tata play|dth/i,
-    entertainment: /netflix|spotify|hotstar|movie|pvr|inox|bookmyshow|youtube|prime/i,
-    emi: /emi|loan repayment|home loan|car loan/i,
-    salary: /salary|wages|payroll|stipend/i,
-    mutual_fund: /mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing/i,
-    stocks: /nse|bse|stock|equity|share/i
-  };
-  for (const [cat, re] of Object.entries(catKw)) {
-    if (re.test(cleanedText)) { category = cat; break; }
+  let category = type === 'income' ? 'income' : (type === 'loan' ? 'emi' : (type === 'investment' ? 'mutual_fund' : 'other_exp'));
+  if (type === 'income') {
+    if (/salary/i.test(cleanedText) || /salary/i.test(description)) category = 'salary';
+    else if (/refund|cashback/i.test(cleanedText) || /refund/i.test(description)) category = 'refund';
+    else category = 'income';
+  } else if (type === 'loan') {
+    category = 'emi';
+  } else {
+    const catKw = {
+      food: /zomato|swiggy|restaurant|cafe|food|dining|pizza|burger|blinkit|zepto|bigbasket|groceries|d-mart|dmart|instamart|starbucks/i,
+      transport: /uber|ola|petrol|fuel|cab|taxi|metro|toll|rapido|bpcl|hpcl|iocl|fastag/i,
+      shopping: /amazon|flipkart|myntra|mall|store|mart|meesho|nykaa|ajio|zara|tata cliq|retail|department/i,
+      health: /pharmacy|medical|hospital|clinic|doctor|apollo|pharmeasy|1mg|lab|diagnostic/i,
+      utilities: /electricity|water|broadband|wifi|internet|bsnl|airtel|jio|bill|recharge|tata play|dth/i,
+      entertainment: /netflix|spotify|hotstar|movie|pvr|inox|bookmyshow|youtube|prime/i,
+      emi: /emi|loan repayment|home loan|car loan/i,
+      salary: /salary|wages|payroll|stipend/i,
+      mutual_fund: /mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing/i,
+      stocks: /nse|bse|stock|equity|share/i
+    };
+    for (const [cat, re] of Object.entries(catKw)) {
+      if (re.test(cleanedText) || re.test(description)) { category = cat; break; }
+    }
   }
 
   return { amount, type, category, description, date };

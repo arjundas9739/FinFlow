@@ -363,13 +363,24 @@ Rs.75000 credited to A/c XX1234 on 01-Sep-26 by Salary."></textarea>
 
         <div class="form-row">
           <div class="form-group flex1">
+            <label>Financial Intent (Type)</label>
+            <select id="smsConfirmType">
+              <option value="expense">💸 Expense (Debit)</option>
+              <option value="income">💰 Income / Credit</option>
+              <option value="investment">📈 Investment (SIP / Stocks / PPF)</option>
+              <option value="savings">🏦 Savings / RD / FD</option>
+              <option value="loan">💳 Loan / EMI Repayment</option>
+            </select>
+          </div>
+          <div class="form-group flex1">
             <label>Category</label>
             <select id="smsConfirmCategory"></select>
           </div>
-          <div class="form-group flex1">
-            <label>Date</label>
-            <input type="date" id="smsConfirmDate" />
-          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="smsConfirmDate" />
         </div>
 
         <div class="form-group">

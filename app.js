@@ -1739,55 +1739,65 @@ function showNextSmsConfirmation() {
 
   logDebug(`📋 Showing SMS Confirm Popup — ₹${parsed.amount} | ${parsed.type} | ${parsed.category}`);
 
-  const badge = document.getElementById('smsConfirmTypeBadge');
-  if (badge) {
-    if (parsed.type === 'income') {
-      badge.textContent = '💰 CREDIT SMS DETECTED';
-      badge.style.background = 'rgba(6,214,160,0.15)';
-      badge.style.color = '#06d6a0';
-    } else if (parsed.type === 'investment') {
-      badge.textContent = '📈 INVESTMENT SMS DETECTED (SIP / STOCKS)';
-      badge.style.background = 'rgba(168,85,247,0.15)';
-      badge.style.color = '#a855f7';
-    } else if (parsed.type === 'savings') {
-      badge.textContent = '🏦 SAVINGS / RD SMS DETECTED';
-      badge.style.background = 'rgba(59,130,246,0.15)';
-      badge.style.color = '#3b82f6';
-    } else if (parsed.type === 'loan') {
-      badge.textContent = '💳 LOAN / EMI SMS DETECTED';
-      badge.style.background = 'rgba(234,179,8,0.15)';
-      badge.style.color = '#eab308';
-    } else {
-      badge.textContent = '💸 DEBIT SMS DETECTED';
-      badge.style.background = 'rgba(255,107,107,0.15)';
-      badge.style.color = '#ff6b6b';
+  const typeSelect = document.getElementById('smsConfirmType');
+  const updateTypeUI = (newType) => {
+    const badge = document.getElementById('smsConfirmTypeBadge');
+    if (badge) {
+      if (newType === 'income') {
+        badge.textContent = '💰 CREDIT SMS DETECTED';
+        badge.style.background = 'rgba(6,214,160,0.15)';
+        badge.style.color = '#06d6a0';
+      } else if (newType === 'investment') {
+        badge.textContent = '📈 INVESTMENT SMS (SIP / STOCKS / PPF)';
+        badge.style.background = 'rgba(168,85,247,0.15)';
+        badge.style.color = '#a855f7';
+      } else if (newType === 'savings') {
+        badge.textContent = '🏦 SAVINGS / RD / FD SMS';
+        badge.style.background = 'rgba(59,130,246,0.15)';
+        badge.style.color = '#3b82f6';
+      } else if (newType === 'loan') {
+        badge.textContent = '💳 LOAN / EMI SMS DETECTED';
+        badge.style.background = 'rgba(234,179,8,0.15)';
+        badge.style.color = '#eab308';
+      } else {
+        badge.textContent = '💸 DEBIT SMS DETECTED';
+        badge.style.background = 'rgba(255,107,107,0.15)';
+        badge.style.color = '#ff6b6b';
+      }
     }
+    const catSelect = document.getElementById('smsConfirmCategory');
+    if (catSelect) {
+      catSelect.innerHTML = '';
+      const cats = getCatsForType(newType);
+      cats.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.label;
+        if (c.id === parsed.category) opt.selected = true;
+        catSelect.appendChild(opt);
+      });
+    }
+  };
+
+  if (typeSelect) {
+    typeSelect.value = parsed.type;
+    updateTypeUI(parsed.type);
+    typeSelect.onchange = function() {
+      updateTypeUI(typeSelect.value);
+    };
   }
 
   const amtInput = document.getElementById('smsConfirmAmount');
   if (amtInput) amtInput.value = parsed.amount;
 
   const descInput = document.getElementById('smsConfirmDesc');
-  if (descInput) descInput.value = parsed.description || (isCredit ? 'Credit Received' : 'Debit Payment');
+  if (descInput) descInput.value = parsed.description || (parsed.type === 'income' ? 'Credit Received' : 'Debit Payment');
 
   const dateInput = document.getElementById('smsConfirmDate');
   if (dateInput) dateInput.value = parsed.date;
 
   const rawTextEl = document.getElementById('smsConfirmRaw');
   if (rawTextEl) rawTextEl.textContent = text;
-
-  const catSelect = document.getElementById('smsConfirmCategory');
-  if (catSelect) {
-    catSelect.innerHTML = '';
-    const cats = getCatsForType(parsed.type);
-    cats.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.label;
-      if (c.id === parsed.category) opt.selected = true;
-      catSelect.appendChild(opt);
-    });
-  }
 
   // Re-wire buttons every time the modal is shown (prevents stale handlers)
   const addBtn = document.getElementById('smsConfirmAddBtn');
@@ -1813,13 +1823,14 @@ function confirmSmsTransaction() {
   const description = document.getElementById('smsConfirmDesc').value.trim();
   const category = document.getElementById('smsConfirmCategory').value;
   const date = document.getElementById('smsConfirmDate').value;
+  const selectedType = document.getElementById('smsConfirmType')?.value || current.parsed.type;
 
   if (!amount || amount <= 0) { showToast('Enter valid amount', '⚠️'); return; }
 
   STATE.transactions.unshift({
     id: uid(),
     amount,
-    type: current.parsed.type,
+    type: selectedType,
     category,
     description,
     date,
@@ -1830,16 +1841,13 @@ function confirmSmsTransaction() {
   });
 
   saveData();
-  logDebug(`💾 Transaction SAVED: ₹${amount} | ${current.parsed.type} | ${category} | ${date}`);
+  logDebug(`💾 Transaction SAVED: ₹${amount} | ${selectedType} | ${category} | ${date}`);
   const modal = document.getElementById('smsConfirmModal');
   if (modal) modal.classList.add('hidden');
-  showToast(`✅ ${current.parsed.type === 'income' ? 'Credit' : 'Debit'} Logged: ${fmt(amount)}`, '💰');
+  showToast(`✅ ${selectedType.toUpperCase()} Logged: ${fmt(amount)}`, '💰');
   renderPage();
   haptic([10, 5, 10]);
-
-  if (pendingSmsQueue.length > 0) {
-    setTimeout(showNextSmsConfirmation, 300);
-  }
+  setTimeout(showNextSmsConfirmation, 300);
 }
 
 function ignoreSmsTransaction() {

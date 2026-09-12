@@ -1,0 +1,16 @@
+{
+  "name": "finflow-money-tracker",
+  "version": "2.0.0",
+  "description": "Smart Money Tracker with Native SMS Auto-Detection",
+  "main": "app.js",
+  "scripts": {
+    "start": "serve . -p 3000",
+    "cap:sync": "npx cap sync",
+    "cap:build": "npx cap copy && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2",
+    "@capacitor/core": "^6.2.2"
+  }
+}

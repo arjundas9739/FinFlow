@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description" content="FinFlow — Smart personal finance tracker with SMS parsing, budgets, insights and more." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>FinFlow — Smart Money Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0f0f1a" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      });
+    }
+  </script>
+</head>
+<body>
+
+  <!-- ══ SPLASH ══ -->
+  <div id="splash">
+    <div class="splash-bg"></div>
+    <div class="splash-content">
+      <div class="splash-logo">💸</div>
+      <h1 class="splash-title">FinFlow</h1>
+      <p class="splash-sub">Smart Money Tracker</p>
+      <div class="splash-loader"><div class="splash-loader-bar"></div></div>
+    </div>
+  </div>
+
+  <!-- ══ ONBOARDING ══ -->
+  <div id="onboarding" class="modal-overlay hidden">
+    <div class="modal-card onboard-card">
+      <div class="onboard-slides" id="onboardSlides">
+        <!-- Slide 1 -->
+        <div class="onboard-slide active" id="ob1">
+          <div class="onboard-emoji">👋</div>
+          <h2>Welcome to FinFlow</h2>
+          <p>Your personal finance companion. Track every rupee, plan every goal.</p>
+          <div class="form-group" style="margin-top:24px">
+            <label>What's your name?</label>
+            <input type="text" id="obName" placeholder="e.g. Rahul" maxlength="20" />
+          </div>
+          <button class="btn-primary" id="ob1Next">Next →</button>
+        </div>
+        <!-- Slide 2 -->
+        <div class="onboard-slide hidden" id="ob2">
+          <div class="onboard-emoji">🔐</div>
+          <h2>Set a PIN</h2>
+          <p>Protect your financial data with a 4-digit PIN (optional).</p>
+          <div class="pin-dots" id="obPinDots">
+            <div class="pin-dot"></div><div class="pin-dot"></div>
+            <div class="pin-dot"></div><div class="pin-dot"></div>
+          </div>
+          <div class="pin-pad" id="obPinPad">
+            <button class="pin-key" data-val="1">1</button><button class="pin-key" data-val="2">2</button><button class="pin-key" data-val="3">3</button>
+            <button class="pin-key" data-val="4">4</button><button class="pin-key" data-val="5">5</button><button class="pin-key" data-val="6">6</button>
+            <button class="pin-key" data-val="7">7</button><button class="pin-key" data-val="8">8</button><button class="pin-key" data-val="9">9</button>
+            <button class="pin-key skip-btn" id="obSkipPin">Skip</button><button class="pin-key" data-val="0">0</button><button class="pin-key del-btn" data-val="del">⌫</button>
+          </div>
+        </div>
+        <!-- Slide 3 -->
+        <div class="onboard-slide hidden" id="ob3">
+          <div class="onboard-emoji">💰</div>
+          <h2>Choose Currency</h2>
+          <p>Select your default currency.</p>
+          <div class="currency-grid" id="obCurrencyGrid">
+            <button class="currency-opt active" data-sym="₹" data-code="INR">🇮🇳 ₹ INR</button>
+            <button class="currency-opt" data-sym="$" data-code="USD">🇺🇸 $ USD</button>
+            <button class="currency-opt" data-sym="€" data-code="EUR">🇪🇺 € EUR</button>
+            <button class="currency-opt" data-sym="£" data-code="GBP">🇬🇧 £ GBP</button>
+            <button class="currency-opt" data-sym="¥" data-code="JPY">🇯🇵 ¥ JPY</button>
+            <button class="currency-opt" data-sym="د.إ" data-code="AED">🇦🇪 د.إ AED</button>
+          </div>
+          <button class="btn-primary" id="ob3Finish" style="margin-top:20px">🚀 Let's Go!</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ PIN LOCK SCREEN ══ -->
+  <div id="pinLock" class="pin-lock-screen hidden">
+    <div class="pin-lock-bg"></div>
+    <div class="pin-lock-content">
+      <div class="pin-lock-avatar" id="pinLockAvatar">💸</div>
+      <div class="pin-lock-name" id="pinLockName">FinFlow</div>
+      <p class="pin-lock-sub">Enter your PIN to continue</p>
+      <div class="pin-dots" id="lockPinDots">
+        <div class="pin-dot"></div><div class="pin-dot"></div>
+        <div class="pin-dot"></div><div class="pin-dot"></div>
+      </div>
+      <div id="pinError" class="pin-error hidden">❌ Incorrect PIN. Try again.</div>
+      <div class="pin-pad" id="lockPinPad">
+        <button class="pin-key" data-val="1">1</button><button class="pin-key" data-val="2">2</button><button class="pin-key" data-val="3">3</button>
+        <button class="pin-key" data-val="4">4</button><button class="pin-key" data-val="5">5</button><button class="pin-key" data-val="6">6</button>
+        <button class="pin-key" data-val="7">7</button><button class="pin-key" data-val="8">8</button><button class="pin-key" data-val="9">9</button>
+        <button class="pin-key" style="opacity:0" disabled></button><button class="pin-key" data-val="0">0</button><button class="pin-key del-btn" data-val="del">⌫</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ APP SHELL ══ -->
+  <div id="app" class="hidden">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-avatar" id="topbarAvatar">💸</div>
+        <div>
+          <div class="app-name">FinFlow</div>
+          <div class="topbar-greeting" id="topbarGreeting">Good morning!</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" id="themeBtn" title="Toggle Theme">🌙</button>
+        <button class="icon-btn" id="smsBtn" title="Parse SMS">📱</button>
+        <button class="icon-btn" id="settingsBtn" title="Settings">⚙️</button>
+        <button class="icon-btn" id="lockBtn" title="Lock App">🔒</button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="mainContent" class="main-content"></main>
+
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
+        <span class="nav-icon">📊</span><span class="nav-label">Home</span>
+      </button>
+      <button class="nav-item" data-page="transactions" id="nav-transactions">
+        <span class="nav-icon">💳</span><span class="nav-label">Txns</span>
+      </button>
+      <button class="nav-item add-btn-nav" id="addTxnBtn">
+        <span class="add-circle">+</span>
+      </button>
+      <button class="nav-item" data-page="budget" id="nav-budget">
+        <span class="nav-icon">🎯</span><span class="nav-label">Budget</span>
+      </button>
+      <button class="nav-item" data-page="insights" id="nav-insights">
+        <span class="nav-icon">🧠</span><span class="nav-label">Insights</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ══ ADD/EDIT TRANSACTION MODAL ══ -->
+  <div id="txnModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2 id="modalTitle">Add Transaction</h2>
+        <button class="modal-close" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="type-tabs" id="typeTabs">
+          <button class="type-tab active" data-type="expense">💸 Expense</button>
+          <button class="type-tab" data-type="income">💰 Income</button>
+          <button class="type-tab" data-type="investment">📈 Investment</button>
+          <button class="type-tab" data-type="loan">🏦 Loan</button>
+          <button class="type-tab" data-type="savings">🏧 Savings</button>
+        </div>
+        <div class="amount-display" id="amountDisplay">₹ 0</div>
+        <div class="form-group">
+          <label>Amount</label>
+          <div class="amount-input-wrap">
+            <span class="currency-sym" id="currencySym">₹</span>
+            <input type="number" id="txnAmount" placeholder="0.00" min="0" step="0.01" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" id="txnDesc" placeholder="e.g. Grocery shopping" />
+        </div>
+        <div class="form-row">
+          <div class="form-group flex1">
+            <label>Category</label>
+            <select id="txnCategory"></select>
+          </div>
+          <div class="form-group flex1">
+            <label>Date</label>
+            <input type="date" id="txnDate" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Account</label>
+          <select id="txnAccount">
+            <option value="cash">💵 Cash</option>
+            <option value="bank">🏦 Bank</option>
+            <option value="credit">💳 Credit Card</option>
+            <option value="upi">📱 UPI</option>
+            <option value="wallet">👛 Wallet</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="txnRecurring" /> Recurring transaction</label>
+          <div id="recurringOptions" class="hidden" style="margin-top:8px">
+            <select id="txnFrequency">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly" selected>Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notes (optional)</label>
+          <textarea id="txnNotes" placeholder="Additional notes..."></textarea>
+        </div>
+        <div class="modal-actions" id="modalActions">
+          <button class="btn-primary" id="saveTxnBtn">💾 Save Transaction</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SMS PARSER MODAL ══ -->
+  <div id="smsModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>📱 Parse Bank SMS</h2>
+        <button class="modal-close" id="smsModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="help-text">Paste one or multiple past bank SMSes at once. FinFlow will auto-detect and parse all transactions.</p>
+        <div class="form-group">
+          <label>SMS Text (Single or Bulk)</label>
+          <textarea id="smsText" rows="6" placeholder="Paste bank SMS messages here (one or multiple lines)...
+
+e.g. Your A/c XX1234 debited for Rs.1200 on 05-Sep-26 via UPI to Swiggy.
+
+Rs.75000 credited to A/c XX1234 on 01-Sep-26 by Salary."></textarea>
+        </div>
+        <button class="btn-primary" id="parseSmsBtn">🔍 Parse & Add</button>
+        <div id="parsedResult" class="parsed-result hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TRANSACTION DETAIL SHEET ══ -->
+  <div id="txnDetail" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>Transaction Details</h2>
+        <button class="modal-close" id="txnDetailClose">✕</button>
+      </div>
+      <div class="modal-body" id="txnDetailBody"></div>
+    </div>
+  </div>
+
+  <!-- ══ BUDGET MODAL ══ -->
+  <div id="budgetModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>🎯 Set Budget</h2>
+        <button class="modal-close" id="budgetModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Month</label>
+          <input type="month" id="budgetMonth" />
+        </div>
+        <div id="budgetCategoryList"></div>
+        <button class="btn-primary" id="saveBudgetBtn" style="margin-top:12px">💾 Save Budget</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CUSTOM CATEGORY MODAL ══ -->
+  <div id="catModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2 id="catModalTitle">Add Category</h2>
+        <button class="modal-close" id="catModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Icon / Emoji</label>
+          <input type="text" id="catEmoji" placeholder="e.g. 🛒" maxlength="4" />
+        </div>
+        <div class="form-group">
+          <label>Category Name</label>
+          <input type="text" id="catName" placeholder="e.g. Groceries" />
+        </div>
+        <div class="form-group">
+          <label>Color</label>
+          <div class="color-picker-row" id="colorPickerRow"></div>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="catType">
+            <option value="expense">💸 Expense</option>
+            <option value="income">💰 Income</option>
+            <option value="investment">📈 Investment</option>
+            <option value="loan">🏦 Loan</option>
+            <option value="savings">🏧 Savings</option>
+          </select>
+        </div>
+        <button class="btn-primary" id="saveCatBtn">💾 Save Category</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CHANGE PIN MODAL ══ -->
+  <div id="pinModal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-height:70dvh">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2 id="pinModalTitle">Set PIN</h2>
+        <button class="modal-close" id="pinModalClose">✕</button>
+      </div>
+      <div class="modal-body" style="text-align:center">
+        <p class="help-text" id="pinModalSub">Enter a new 4-digit PIN</p>
+        <div class="pin-dots" id="modalPinDots">
+          <div class="pin-dot"></div><div class="pin-dot"></div>
+          <div class="pin-dot"></div><div class="pin-dot"></div>
+        </div>
+        <div class="pin-pad" id="modalPinPad">
+          <button class="pin-key" data-val="1">1</button><button class="pin-key" data-val="2">2</button><button class="pin-key" data-val="3">3</button>
+          <button class="pin-key" data-val="4">4</button><button class="pin-key" data-val="5">5</button><button class="pin-key" data-val="6">6</button>
+          <button class="pin-key" data-val="7">7</button><button class="pin-key" data-val="8">8</button><button class="pin-key" data-val="9">9</button>
+          <button class="pin-key" style="opacity:0" disabled></button><button class="pin-key" data-val="0">0</button><button class="pin-key del-btn" data-val="del">⌫</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TOAST ══ -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

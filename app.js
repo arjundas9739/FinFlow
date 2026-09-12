@@ -1415,8 +1415,11 @@ function closeSmsModal() { document.getElementById('smsModal').classList.add('hi
 function parseSMS(text) {
   if(!text?.trim()) return null;
 
-  // Pre-cleaning: Strip Avl bal / Available balance to prevent picking up balance as txn amount
-  const cleanedText = text.split(/(?:Avl|Available|Net)\s*(?:bal|balance)\s*:?/i)[0];
+  // 0. Pre-cleaning: Strip Avl bal / Available balance AND customer care disclaimers (Not You? Call 1800...)
+  let cleanedText = text
+    .split(/(?:Avl|Available|Net)\s*(?:bal|balance)\s*:?/i)[0]
+    .split(/(?:Not\s*You\?|Call\s*1800|SMS\s*BLOCK)/i)[0]
+    .trim();
 
   // 1. Amount Extraction (supports Rs, Rs., INR, ₹, Amt, Amount)
   const amtPatterns = [
@@ -1438,17 +1441,17 @@ function parseSMS(text) {
   if (!amount) return null;
 
   // 2. Credit vs Debit Classification
-  const isCredit = /credited|credit|received|salary|added|deposit|refund|cashback|interest|dividend|inward/i.test(cleanedText);
-  const isDebit = /debited|debit|deducted|paid|spent|purchase|withdrawn|payment|emi|transferred|sent|txn|to\s+/i.test(cleanedText);
+  const isCredit = /\bcredited\b|\bcredit\b|\breceived\b|\bsalary\b|\badded\b|\bdeposit\b|\brefund\b|\bcashback\b|\binterest\b|\bdividend\b|\binward\b/i.test(cleanedText);
+  const isDebit = /\bdebited\b|\bdebit\b|\bdeducted\b|\bpaid\b|\bspent\b|\bpurchase\b|\bwithdrawn\b|\bpayment\b|\bemi\b|\btransferred\b|\bsent\b|\btxn\b|\bdr\b/i.test(cleanedText);
 
-  let type = 'expense'; // Debits
+  let type = 'expense'; // Debits by default
   if (isCredit && !isDebit) {
     type = 'income'; // Credits
-  } else if (/emi|loan repayment|housing loan|car loan|personal loan/i.test(cleanedText)) {
+  } else if (/\bemi\b|\bloan repayment\b|\bhousing loan\b|\bcar loan\b|\bpersonal loan\b/i.test(cleanedText)) {
     type = 'loan';
-  } else if (/mutual fund|sip|groww|zerodha|stocks|nse|bse|demat|indmoney|upstox|clearing corp|indian clearing/i.test(cleanedText)) {
+  } else if (/\bmutual fund\b|\bsip\b|\bgroww\b|\bzerodha\b|\bupstox\b|\bcoin\b|\bclearing corp\b|\bindian clearing\b/i.test(cleanedText)) {
     type = 'investment';
-  } else if (/emergency fund|recurring deposit|fd|rd|fixed deposit/i.test(cleanedText)) {
+  } else if (/\bemergency fund\b|\brecurring deposit\b|\bfd\b|\brd\b|\bfixed deposit\b/i.test(cleanedText)) {
     type = 'savings';
   }
 
@@ -1462,8 +1465,11 @@ function parseSMS(text) {
   for (const p of descPatterns) {
     const m = cleanedText.match(p);
     if (m && m[1]) {
-      const cleaned = m[1].replace(/^(a\/c|account|ref|txn|val|bal|bank)\b/i, '').trim();
-      if (cleaned.length >= 2) { description = cleaned; break; }
+      let cleaned = m[1].replace(/^(a\/c|account|ref|txn|val|bal|bank)\b/i, '').trim();
+      if (cleaned.length >= 2 && !/^\d+$/.test(cleaned) && !/^(hdfc|sbi|icici|axis|bank)$/i.test(cleaned)) {
+        description = cleaned;
+        break;
+      }
     }
   }
 

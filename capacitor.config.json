@@ -1,7 +1,7 @@
 {
   "appId": "com.finflow.moneytracker",
   "appName": "FinFlow",
-  "webDir": "dist",
+  "webDir": ".",
   "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https"

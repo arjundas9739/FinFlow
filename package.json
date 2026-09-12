@@ -1,16 +1,48 @@
 {
-  "name": "finflow-money-tracker",
-  "version": "2.0.0",
-  "description": "Smart Money Tracker with Native SMS Auto-Detection",
-  "main": "app.js",
+  "name": "big-integer",
+  "version": "1.6.52",
+  "author": "Peter Olson <peter.e.c.olson+npm@gmail.com>",
+  "description": "An arbitrary length integer library for Javascript",
+  "contributors": [],
+  "bin": {},
   "scripts": {
-    "start": "serve . -p 3000",
-    "cap:sync": "npx cap sync",
-    "cap:build": "npx cap copy && npx cap open android"
+    "test": "tsc && karma start my.conf.js && node spec/tsDefinitions.js",
+    "minify": "uglifyjs BigInteger.js -o BigInteger.min.js"
   },
-  "dependencies": {
-    "@capacitor/android": "^6.2.2",
-    "@capacitor/cli": "^6.2.2",
-    "@capacitor/core": "^6.2.2"
-  }
+  "main": "./BigInteger",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:peterolson/BigInteger.js.git"
+  },
+  "keywords": [
+    "math",
+    "big",
+    "bignum",
+    "bigint",
+    "biginteger",
+    "integer",
+    "arbitrary",
+    "precision",
+    "arithmetic"
+  ],
+  "devDependencies": {
+    "@types/lodash": "^4.14.175",
+    "@types/node": "^7.10.2",
+    "coveralls": "^3.0.6",
+    "jasmine": "3.5.0",
+    "jasmine-core": "^3.5.0",
+    "karma": "^6.3.4",
+    "karma-cli": "^2.0.0",
+    "karma-coverage": "^2.0.3",
+    "karma-jasmine": "^4.0.1",
+    "karma-phantomjs-launcher": "^1.0.4",
+    "lodash": "^4.17.21",
+    "typescript": "^5.3.2",
+    "uglify-js": "^3.17.4"
+  },
+  "license": "Unlicense",
+  "engines": {
+    "node": ">=0.6"
+  },
+  "typings": "./BigInteger.d.ts"
 }

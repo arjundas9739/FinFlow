@@ -28,8 +28,9 @@ jobs:
 
       - name: Install Dependencies & Sync Capacitor
         run: |
-          npm install
-          ./node_modules/.bin/cap sync android
+          npm install @capacitor/core@6 @capacitor/android@6 @capacitor/cli@6
+          npx cap sync android
+
 
       - name: Grant Execute Permission for Gradlew
         run: |

@@ -1538,6 +1538,7 @@ function parseBulkSMS(text) {
 // DEBUG LOGGER
 // ══════════════════════════════════════
 let debugLogsList = [];
+let pendingSmsQueue = []; // Queue of parsed SMS transactions waiting for user confirmation
 
 function logDebug(msg) {
   const time = new Date().toLocaleTimeString('en-IN', { hour12: false });
@@ -1580,44 +1581,53 @@ window.addEventListener('native_sms_debug', (e) => {
 });
 
 window.addEventListener('native_sms_received', (e) => {
-  const detail = e.detail || {};
-  let sender = detail.sender || 'Bank';
-  let text = detail.text || '';
-  
-  if (detail.textB64) {
-    try { text = decodeURIComponent(escape(atob(detail.textB64))); } catch(err) { text = atob(detail.textB64); }
-  }
-  if (detail.senderB64) {
-    try { sender = decodeURIComponent(escape(atob(detail.senderB64))); } catch(err) { sender = atob(detail.senderB64); }
-  }
+  try {
+    const detail = e.detail || {};
+    let sender = detail.sender || 'Bank';
+    let text = detail.text || '';
 
-  logDebug(`📱 SMS Received from: "${sender}"\nText: "${text}"`);
+    if (detail.textB64) {
+      try { text = decodeURIComponent(escape(atob(detail.textB64))); } catch(err) { text = atob(detail.textB64); }
+    }
+    if (detail.senderB64) {
+      try { sender = decodeURIComponent(escape(atob(detail.senderB64))); } catch(err) { sender = atob(detail.senderB64); }
+    }
 
-  if (!text) {
-    logDebug('⚠️ Empty SMS text received.');
-    return;
-  }
+    logDebug(`📱 SMS Received from: "${sender}"\nText: "${text}"`);
 
-  const parsed = parseSMS(text);
-  if (parsed) {
-    logDebug(`✅ Parsed: Amount ₹${parsed.amount} | Type: ${parsed.type} | Category: ${parsed.category} | Merchant: ${parsed.description || 'N/A'}`);
-    const isDuplicate = STATE.transactions.some(t => 
-      t.amount === parsed.amount && 
-      t.date === parsed.date && 
-      t.description === parsed.description
-    );
-    if (isDuplicate) {
-      logDebug('ℹ️ Duplicate transaction ignored.');
+    if (!text) {
+      logDebug('⚠️ Empty SMS text received.');
       return;
     }
 
-    showToast(`⚡ Bank SMS Received: ${fmt(parsed.amount)}`, '📱');
-    pendingSmsQueue.push({ sender, text, parsed });
-    showNextSmsConfirmation();
-  } else {
-    logDebug('❌ parseSMS returned null (SMS was not recognized as financial transaction).');
+    const parsed = parseSMS(text);
+    if (parsed) {
+      logDebug(`✅ Parsed: Amount ₹${parsed.amount} | Type: ${parsed.type} | Category: ${parsed.category} | Merchant: ${parsed.description || 'N/A'}`);
+
+      const isDuplicate = STATE.transactions.some(t =>
+        t.amount === parsed.amount &&
+        t.date === parsed.date &&
+        t.description === parsed.description
+      );
+      if (isDuplicate) {
+        logDebug('ℹ️ Duplicate transaction ignored.');
+        return;
+      }
+
+      logDebug(`📥 Adding to confirmation queue (queue size before: ${pendingSmsQueue.length})`);
+      showToast(`⚡ Bank SMS: ${fmt(parsed.amount)}`, '📱');
+      pendingSmsQueue.push({ sender, text, parsed });
+      logDebug(`📥 Queue size after push: ${pendingSmsQueue.length}. Calling showNextSmsConfirmation...`);
+      showNextSmsConfirmation();
+    } else {
+      logDebug('❌ parseSMS returned null (SMS not recognized as financial transaction).');
+    }
+  } catch(err) {
+    logDebug(`🚨 JS ERROR in native_sms_received handler: ${err.name}: ${err.message}`);
+    console.error('native_sms_received error:', err);
   }
 });
+
 
 function showNextSmsConfirmation() {
   if (pendingSmsQueue.length === 0) return;

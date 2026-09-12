@@ -1593,16 +1593,6 @@ function parseSMS(text) {
     }
   }
 
-  // Smart Debit Type Detection: Investment vs Savings vs Loan vs Expense
-  const combinedText = (cleanedText + ' ' + description).toLowerCase();
-  if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing|ppf|public provident fund|nps|national pension|smallcase|kuvera|et money|paytm money|indmoney|stocks|equity|shares|bse|nse|sgb|sovereign gold|digital gold)\b/i.test(combinedText) || /Indian Clearing Corporation/i.test(cleanedText)) {
-    type = 'investment';
-  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit|rd installment|epf|provident fund)\b/i.test(combinedText) || /RD Installment/i.test(cleanedText)) {
-    type = 'savings';
-  } else if (/\b(?:emi|loan repayment|home loan|car loan|personal loan|bajaj finserv|hdb financial|tata capital)\b/i.test(combinedText) || /Info:\s*EMI/i.test(cleanedText)) {
-    type = 'loan';
-  }
-
   // 3. Merchant / Description Extraction
   let description = '';
 
@@ -1676,6 +1666,16 @@ function parseSMS(text) {
     if (forMatch && forMatch[1]) {
       description = forMatch[1].trim();
     }
+  }
+
+  // Smart Debit Type Detection: Investment vs Savings vs Loan vs Expense
+  const combinedText = (cleanedText + ' ' + description).toLowerCase();
+  if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing|ppf|public provident fund|nps|national pension|smallcase|kuvera|et money|paytm money|indmoney|stocks|equity|shares|bse|nse|sgb|sovereign gold|digital gold)\b/i.test(combinedText) || /Indian Clearing Corporation/i.test(cleanedText)) {
+    type = 'investment';
+  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit|rd installment|epf|provident fund)\b/i.test(combinedText) || /RD Installment/i.test(cleanedText)) {
+    type = 'savings';
+  } else if (/\b(?:emi|loan repayment|home loan|car loan|personal loan|bajaj finserv|hdb financial|tata capital)\b/i.test(combinedText) || /Info:\s*EMI/i.test(cleanedText)) {
+    type = 'loan';
   }
 
   if (!description) {

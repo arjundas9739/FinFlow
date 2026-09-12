@@ -1460,12 +1460,14 @@ function parseSMS(text) {
     }
   }
 
-  if (/\b(?:emi|loan repayment|home loan|car loan|personal loan)\b/i.test(cleanedText) || /Info:\s*EMI/i.test(cleanedText)) {
-    type = 'loan';
-  } else if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing)\b/i.test(cleanedText) || /Indian Clearing Corporation/i.test(cleanedText)) {
+  // Smart Debit Type Detection: Investment vs Savings vs Loan vs Expense
+  const combinedText = (cleanedText + ' ' + description).toLowerCase();
+  if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing|ppf|public provident fund|nps|national pension|smallcase|kuvera|et money|paytm money|indmoney|stocks|equity|shares|bse|nse|sgb|sovereign gold|digital gold)\b/i.test(combinedText) || /Indian Clearing Corporation/i.test(cleanedText)) {
     type = 'investment';
-  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit)\b/i.test(cleanedText) || /RD Installment/i.test(cleanedText)) {
+  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit|rd installment|epf|provident fund)\b/i.test(combinedText) || /RD Installment/i.test(cleanedText)) {
     type = 'savings';
+  } else if (/\b(?:emi|loan repayment|home loan|car loan|personal loan|bajaj finserv|hdb financial|tata capital)\b/i.test(combinedText) || /Info:\s*EMI/i.test(cleanedText)) {
+    type = 'loan';
   }
 
   // 3. Merchant / Description Extraction
@@ -1737,12 +1739,29 @@ function showNextSmsConfirmation() {
 
   logDebug(`📋 Showing SMS Confirm Popup — ₹${parsed.amount} | ${parsed.type} | ${parsed.category}`);
 
-  const isCredit = parsed.type === 'income';
   const badge = document.getElementById('smsConfirmTypeBadge');
   if (badge) {
-    badge.textContent = isCredit ? '💰 CREDIT SMS DETECTED' : '💸 DEBIT SMS DETECTED';
-    badge.style.background = isCredit ? 'rgba(6,214,160,0.15)' : 'rgba(255,107,107,0.15)';
-    badge.style.color = isCredit ? 'var(--income-color)' : 'var(--expense-color)';
+    if (parsed.type === 'income') {
+      badge.textContent = '💰 CREDIT SMS DETECTED';
+      badge.style.background = 'rgba(6,214,160,0.15)';
+      badge.style.color = '#06d6a0';
+    } else if (parsed.type === 'investment') {
+      badge.textContent = '📈 INVESTMENT SMS DETECTED (SIP / STOCKS)';
+      badge.style.background = 'rgba(168,85,247,0.15)';
+      badge.style.color = '#a855f7';
+    } else if (parsed.type === 'savings') {
+      badge.textContent = '🏦 SAVINGS / RD SMS DETECTED';
+      badge.style.background = 'rgba(59,130,246,0.15)';
+      badge.style.color = '#3b82f6';
+    } else if (parsed.type === 'loan') {
+      badge.textContent = '💳 LOAN / EMI SMS DETECTED';
+      badge.style.background = 'rgba(234,179,8,0.15)';
+      badge.style.color = '#eab308';
+    } else {
+      badge.textContent = '💸 DEBIT SMS DETECTED';
+      badge.style.background = 'rgba(255,107,107,0.15)';
+      badge.style.color = '#ff6b6b';
+    }
   }
 
   const amtInput = document.getElementById('smsConfirmAmount');

@@ -79,8 +79,8 @@ const DEFAULT_CATS = {
 };
 
 const TYPE_META = {
-  expense:    { icon:'💸', color:'#ff6b6b', label:'Expense',    sign:-1 },
-  income:     { icon:'💰', color:'#06d6a0', label:'Income',     sign:+1 },
+  expense:    { icon:'💸', color:'#ff6b6b', label:'Debit',     sign:-1 },
+  income:     { icon:'💰', color:'#06d6a0', label:'Credit',    sign:+1 },
   investment: { icon:'📈', color:'#6c63ff', label:'Investment', sign:-1 },
   loan:       { icon:'🏦', color:'#ffd166', label:'Loan',       sign:-1 },
   savings:    { icon:'🏧', color:'#00d4aa', label:'Savings',    sign:-1 },
@@ -351,11 +351,11 @@ function renderDashboard() {
     <div class="balance-month">💾 Savings rate: <b style="color:#06d6a0">${savRate}%</b></div>
     <div class="balance-chips">
       <div class="balance-chip">
-        <div class="chip-label">💰 Income</div>
+        <div class="chip-label">💰 Credits</div>
         <div class="chip-value income-c">${fmtShort(s.income)}</div>
       </div>
       <div class="balance-chip">
-        <div class="chip-label">💸 Expense</div>
+        <div class="chip-label">💸 Debits</div>
         <div class="chip-value expense-c">${fmtShort(s.expense)}</div>
       </div>
     </div>
@@ -456,7 +456,7 @@ function renderTransactions() {
 
   // Filters
   const fr = document.createElement('div'); fr.className='filter-row';
-  [['all','All'],['expense','💸 Expense'],['income','💰 Income'],['investment','📈 Invest'],['loan','🏦 Loan'],['savings','🏧 Savings']].forEach(([id,label])=>{
+  [['all','All'],['expense','💸 Debit'],['income','💰 Credit'],['investment','📈 Invest'],['loan','🏦 Loan'],['savings','🏧 Savings']].forEach(([id,label])=>{
     const chip = document.createElement('button');
     chip.className='filter-chip'+(STATE.filterType===id?' active':'');
     chip.textContent=label;
@@ -468,8 +468,8 @@ function renderTransactions() {
   // Quick stats
   const qs=document.createElement('div'); qs.className='quick-stats';
   qs.innerHTML=`
-    <div class="qs-item"><div class="qs-label">Income</div><div class="qs-value" style="color:var(--income-color)">${fmtShort(s.income)}</div></div>
-    <div class="qs-item"><div class="qs-label">Expense</div><div class="qs-value" style="color:var(--expense-color)">${fmtShort(s.expense)}</div></div>
+    <div class="qs-item"><div class="qs-label">Credits</div><div class="qs-value" style="color:var(--income-color)">${fmtShort(s.income)}</div></div>
+    <div class="qs-item"><div class="qs-label">Debits</div><div class="qs-value" style="color:var(--expense-color)">${fmtShort(s.expense)}</div></div>
     <div class="qs-item"><div class="qs-label">Balance</div><div class="qs-value" style="color:${s.balance>=0?'var(--income-color)':'var(--expense-color)'}">${fmtShort(Math.abs(s.balance))}</div></div>
   `;
   el.appendChild(qs);
@@ -1415,10 +1415,13 @@ function closeSmsModal() { document.getElementById('smsModal').classList.add('hi
 function parseSMS(text) {
   if(!text?.trim()) return null;
 
+  // Pre-cleaning: Strip Avl bal / Available balance to prevent picking up balance as txn amount
+  const cleanedText = text.split(/(?:Avl|Available|Net)\s*(?:bal|balance)\s*:?/i)[0];
+
   // 1. Amount Extraction (supports Rs, Rs., INR, ₹, Amt, Amount)
   const amtPatterns = [
     /(?:Rs\.?|INR|₹|Amt\.?|Amount)\s*:?\s*([\d,]+\.?\d*)/i,
-    /(?:debited|credited|paid|received|spent|transferred|sent|withdrawn)\s+(?:for\s+)?(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /(?:debited|credited|paid|received|spent|transferred|sent|withdrawn|deducted|payment|txn)\s+(?:for\s+)?(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
     /([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i,
     /(?:VPA|UPI|Ref)\s+[\w@.-]+\s+for\s+([\d,]+\.?\d*)/i,
     /(?:by|for|of)\s+(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i
@@ -1426,7 +1429,7 @@ function parseSMS(text) {
 
   let amount = null;
   for (const p of amtPatterns) {
-    const m = text.match(p);
+    const m = cleanedText.match(p);
     if (m) {
       const val = parseFloat(m[1].replace(/,/g, ''));
       if (!isNaN(val) && val > 0) { amount = val; break; }
@@ -1435,47 +1438,54 @@ function parseSMS(text) {
   if (!amount) return null;
 
   // 2. Credit vs Debit Classification
-  const isCredit = /credited|credit|received|salary|added|deposit|refund|cashback|interest|dividend|inward/i.test(text);
-  const isDebit = /debited|debit|paid|spent|purchase|withdrawn|payment|emi|transferred|sent|to\s+/i.test(text);
+  const isCredit = /credited|credit|received|salary|added|deposit|refund|cashback|interest|dividend|inward/i.test(cleanedText);
+  const isDebit = /debited|debit|deducted|paid|spent|purchase|withdrawn|payment|emi|transferred|sent|txn|to\s+/i.test(cleanedText);
 
-  let type = 'expense';
+  let type = 'expense'; // Debits
   if (isCredit && !isDebit) {
-    type = 'income';
-  } else if (/emi|loan repayment|housing loan|car loan|personal loan/i.test(text)) {
+    type = 'income'; // Credits
+  } else if (/emi|loan repayment|housing loan|car loan|personal loan/i.test(cleanedText)) {
     type = 'loan';
-  } else if (/mutual fund|sip|groww|zerodha|stocks|nse|bse|demat|indmoney|upstox/i.test(text)) {
+  } else if (/mutual fund|sip|groww|zerodha|stocks|nse|bse|demat|indmoney|upstox|clearing corp|indian clearing/i.test(cleanedText)) {
     type = 'investment';
-  } else if (/emergency fund|recurring deposit|fd|rd|fixed deposit/i.test(text)) {
+  } else if (/emergency fund|recurring deposit|fd|rd|fixed deposit/i.test(cleanedText)) {
     type = 'savings';
   }
 
   // 3. Merchant / Description Extraction
   let description = '';
   const descPatterns = [
-    /(?:at|to|from|for|via|info:)\s+([A-Za-z0-9\s&'.-]{2,30}?)(?:\.|\s+on|\s+ref|\s+vpa|\s+a\/c|\s+bal|$)/i,
+    /(?:info:|towards|at|to|from|for|via)\s+([A-Za-z0-9\s&'.-]{2,35}?)(?:\.|\s+on|\s+ref|\s+vpa|\s+a\/c|\s+bal|\s+umrn|$)/i,
     /UPI[\s\/-]+(?:to|from)?\s*([A-Za-z0-9\s]{2,25})/i,
     /(?:VPA)\s+([A-Za-z0-9@._-]{3,30})/i
   ];
   for (const p of descPatterns) {
-    const m = text.match(p);
+    const m = cleanedText.match(p);
     if (m && m[1]) {
       const cleaned = m[1].replace(/^(a\/c|account|ref|txn|val|bal|bank)\b/i, '').trim();
       if (cleaned.length >= 2) { description = cleaned; break; }
     }
   }
 
-  // 4. Date Extraction (DD-MM-YYYY, DD/MM/YY, DD Mon YYYY)
+  // 4. Date Extraction (DD-MM-YYYY, YYYY-MM-DD, DD/MM/YY, DD Mon YYYY, DD-MM)
   let date = todayStr();
   const datePats = [
     /(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/,
     /(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/,
-    /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{0,4})/i
+    /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\/]?\s*\d{0,4})/i,
+    /(\d{1,2}[-\/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\/]\d{2,4})/i,
+    /(\d{1,2}[-\/]\d{1,2})/
   ];
   for (const p of datePats) {
-    const m = text.match(p);
+    const m = cleanedText.match(p);
     if (m) {
       try {
-        const d = new Date(m[1]);
+        let rawDate = m[1];
+        if (/^\d{1,2}[-\/]\d{1,2}$/.test(rawDate)) {
+          const yr = new Date().getFullYear();
+          rawDate = `${rawDate}-${yr}`;
+        }
+        const d = new Date(rawDate);
         if (!isNaN(d.getTime())) date = d.toISOString().slice(0, 10);
       } catch (e) {}
       break;
@@ -1487,17 +1497,17 @@ function parseSMS(text) {
   const catKw = {
     food: /zomato|swiggy|restaurant|cafe|food|dining|pizza|burger|blinkit|zepto|bigbasket|groceries|d-mart|dmart|instamart|starbucks/i,
     transport: /uber|ola|petrol|fuel|cab|taxi|metro|toll|rapido|bpcl|hpcl|iocl|fastag/i,
-    shopping: /amazon|flipkart|myntra|mall|store|mart|meesho|nykaa|ajio|zara|tata cliq/i,
+    shopping: /amazon|flipkart|myntra|mall|store|mart|meesho|nykaa|ajio|zara|tata cliq|retail|department/i,
     health: /pharmacy|medical|hospital|clinic|doctor|apollo|pharmeasy|1mg|lab|diagnostic/i,
     utilities: /electricity|water|broadband|wifi|internet|bsnl|airtel|jio|bill|recharge|tata play|dth/i,
     entertainment: /netflix|spotify|hotstar|movie|pvr|inox|bookmyshow|youtube|prime/i,
     emi: /emi|loan repayment|home loan|car loan/i,
     salary: /salary|wages|payroll|stipend/i,
-    mutual_fund: /mutual fund|sip|groww|zerodha|upstox|coin/i,
+    mutual_fund: /mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing/i,
     stocks: /nse|bse|stock|equity|share/i
   };
   for (const [cat, re] of Object.entries(catKw)) {
-    if (re.test(text)) { category = cat; break; }
+    if (re.test(cleanedText)) { category = cat; break; }
   }
 
   return { amount, type, category, description, date };
@@ -1518,25 +1528,19 @@ function parseBulkSMS(text) {
   return results;
 }
 
-// Native Android Background SMS Receiver Event Bridge
+// Interactive SMS Confirmation Modal Queue
+let pendingSmsQueue = [];
+
 window.addEventListener('native_sms_received', (e) => {
   const detail = e.detail || {};
   let sender = detail.sender || 'Bank';
   let text = detail.text || '';
   
   if (detail.textB64) {
-    try {
-      text = decodeURIComponent(escape(atob(detail.textB64)));
-    } catch(err) {
-      text = atob(detail.textB64);
-    }
+    try { text = decodeURIComponent(escape(atob(detail.textB64))); } catch(err) { text = atob(detail.textB64); }
   }
   if (detail.senderB64) {
-    try {
-      sender = decodeURIComponent(escape(atob(detail.senderB64)));
-    } catch(err) {
-      sender = atob(detail.senderB64);
-    }
+    try { sender = decodeURIComponent(escape(atob(detail.senderB64))); } catch(err) { sender = atob(detail.senderB64); }
   }
 
   if (!text) return;
@@ -1549,20 +1553,98 @@ window.addEventListener('native_sms_received', (e) => {
     );
     if (isDuplicate) return;
 
-    STATE.transactions.unshift({
-      id: uid(),
-      ...parsed,
-      account: 'bank',
-      recurring: false,
-      notes: `Auto-detected from SMS (${sender})`,
-      createdAt: new Date().toISOString()
-    });
-    saveData();
-    if (typeof renderPage === 'function') renderPage();
-    showToast(`⚡ Auto-logged: ${fmt(parsed.amount)} (${getCat(parsed.category).label})`, '📱');
-    haptic([20, 10, 20]);
+    pendingSmsQueue.push({ sender, text, parsed });
+    showNextSmsConfirmation();
   }
 });
+
+function showNextSmsConfirmation() {
+  if (pendingSmsQueue.length === 0) return;
+  const current = pendingSmsQueue[0];
+  const { sender, text, parsed } = current;
+
+  const isCredit = parsed.type === 'income';
+  const badge = document.getElementById('smsConfirmTypeBadge');
+  if (badge) {
+    badge.textContent = isCredit ? '💰 CREDIT SMS DETECTED' : '💸 DEBIT SMS DETECTED';
+    badge.style.background = isCredit ? 'rgba(6,214,160,0.15)' : 'rgba(255,107,107,0.15)';
+    badge.style.color = isCredit ? 'var(--income-color)' : 'var(--expense-color)';
+  }
+
+  const amtInput = document.getElementById('smsConfirmAmount');
+  if (amtInput) amtInput.value = parsed.amount;
+
+  const descInput = document.getElementById('smsConfirmDesc');
+  if (descInput) descInput.value = parsed.description || (isCredit ? 'Credit Received' : 'Debit Payment');
+
+  const dateInput = document.getElementById('smsConfirmDate');
+  if (dateInput) dateInput.value = parsed.date;
+
+  const rawTextEl = document.getElementById('smsConfirmRaw');
+  if (rawTextEl) rawTextEl.textContent = text;
+
+  const catSelect = document.getElementById('smsConfirmCategory');
+  if (catSelect) {
+    catSelect.innerHTML = '';
+    const cats = getCatsForType(parsed.type);
+    cats.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.label;
+      if (c.id === parsed.category) opt.selected = true;
+      catSelect.appendChild(opt);
+    });
+  }
+
+  const modal = document.getElementById('smsConfirmModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function confirmSmsTransaction() {
+  if (pendingSmsQueue.length === 0) return;
+  const current = pendingSmsQueue.shift();
+  const amount = parseFloat(document.getElementById('smsConfirmAmount').value);
+  const description = document.getElementById('smsConfirmDesc').value.trim();
+  const category = document.getElementById('smsConfirmCategory').value;
+  const date = document.getElementById('smsConfirmDate').value;
+
+  if (!amount || amount <= 0) { showToast('Enter valid amount', '⚠️'); return; }
+
+  STATE.transactions.unshift({
+    id: uid(),
+    amount,
+    type: current.parsed.type,
+    category,
+    description,
+    date,
+    account: 'bank',
+    recurring: false,
+    notes: `Auto-detected from SMS (${current.sender})`,
+    createdAt: new Date().toISOString()
+  });
+
+  saveData();
+  const modal = document.getElementById('smsConfirmModal');
+  if (modal) modal.classList.add('hidden');
+  showToast(`Logged ${current.parsed.type === 'income' ? 'Credit' : 'Debit'}: ${fmt(amount)}`, '📱');
+  renderPage();
+  haptic([10, 5, 10]);
+
+  if (pendingSmsQueue.length > 0) {
+    setTimeout(showNextSmsConfirmation, 300);
+  }
+}
+
+function ignoreSmsTransaction() {
+  if (pendingSmsQueue.length === 0) return;
+  pendingSmsQueue.shift();
+  const modal = document.getElementById('smsConfirmModal');
+  if (modal) modal.classList.add('hidden');
+  showToast('SMS transaction ignored', 'ℹ️');
+  if (pendingSmsQueue.length > 0) {
+    setTimeout(showNextSmsConfirmation, 300);
+  }
+}
 
 function handleParseSms() {
   const text = document.getElementById('smsText').value;
@@ -1891,6 +1973,14 @@ function init() {
   document.getElementById('saveCatBtn').onclick=saveCat;
   document.getElementById('pinModalClose').onclick=()=>document.getElementById('pinModal').classList.add('hidden');
   document.getElementById('pinModal').onclick=e=>{ if(e.target===document.getElementById('pinModal')) document.getElementById('pinModal').classList.add('hidden'); };
+  
+  // SMS Confirmation Modal
+  const confirmClose = document.getElementById('smsConfirmClose');
+  if (confirmClose) confirmClose.onclick = ignoreSmsTransaction;
+  const confirmAdd = document.getElementById('smsConfirmAddBtn');
+  if (confirmAdd) confirmAdd.onclick = confirmSmsTransaction;
+  const confirmCancel = document.getElementById('smsConfirmCancelBtn');
+  if (confirmCancel) confirmCancel.onclick = ignoreSmsTransaction;
 
   // Type tabs
   document.querySelectorAll('.type-tab').forEach(b=>b.onclick=()=>{ setActiveTypeTab(b.dataset.type); populateCategorySelect(b.dataset.type); });

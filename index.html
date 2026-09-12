@@ -159,8 +159,8 @@
       </div>
       <div class="modal-body">
         <div class="type-tabs" id="typeTabs">
-          <button class="type-tab active" data-type="expense">💸 Expense</button>
-          <button class="type-tab" data-type="income">💰 Income</button>
+          <button class="type-tab active" data-type="expense">💸 Debit</button>
+          <button class="type-tab" data-type="income">💰 Credit</button>
           <button class="type-tab" data-type="investment">📈 Investment</button>
           <button class="type-tab" data-type="loan">🏦 Loan</button>
           <button class="type-tab" data-type="savings">🏧 Savings</button>
@@ -329,6 +329,56 @@ Rs.75000 credited to A/c XX1234 on 01-Sep-26 by Salary."></textarea>
           <button class="pin-key" data-val="4">4</button><button class="pin-key" data-val="5">5</button><button class="pin-key" data-val="6">6</button>
           <button class="pin-key" data-val="7">7</button><button class="pin-key" data-val="8">8</button><button class="pin-key" data-val="9">9</button>
           <button class="pin-key" style="opacity:0" disabled></button><button class="pin-key" data-val="0">0</button><button class="pin-key del-btn" data-val="del">⌫</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SMS CONFIRMATION POPUP MODAL ══ -->
+  <div id="smsConfirmModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>⚡ SMS Detected — Confirm Transaction</h2>
+        <button class="modal-close" id="smsConfirmClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="help-text">Review and confirm auto-parsed transaction before logging.</p>
+        
+        <div id="smsConfirmTypeBadge" style="margin-bottom:12px;font-weight:700;font-size:0.85rem;padding:6px 12px;border-radius:8px;display:inline-block"></div>
+
+        <div class="form-group">
+          <label>Amount</label>
+          <div class="amount-input-wrap">
+            <span class="currency-sym">₹</span>
+            <input type="number" id="smsConfirmAmount" step="0.01" style="font-size:1.3rem;font-weight:800;color:var(--accent)" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Merchant / Description</label>
+          <input type="text" id="smsConfirmDesc" />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex1">
+            <label>Category</label>
+            <select id="smsConfirmCategory"></select>
+          </div>
+          <div class="form-group flex1">
+            <label>Date</label>
+            <input type="date" id="smsConfirmDate" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Original SMS Text</label>
+          <div id="smsConfirmRaw" style="font-size:0.75rem;padding:10px;background:var(--bg-card2);border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);word-break:break-word"></div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button class="btn-primary" id="smsConfirmAddBtn" style="flex:1">✅ Confirm & Add</button>
+          <button class="btn-danger" id="smsConfirmCancelBtn" style="padding:12px 18px">✕ Ignore</button>
         </div>
       </div>
     </div>

@@ -301,6 +301,8 @@ public class MainActivity extends BridgeActivity {
 
         try {
             SharedPreferences prefs = context.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+            boolean isFirstRun = !prefs.contains("inbox_sync_initialized");
+
             String processedIdsJson = prefs.getString("processed_sms_ids", "[]");
             JSONArray processedIdsArr = new JSONArray(processedIdsJson);
             java.util.Set<String> processedIds = new java.util.HashSet<>();
@@ -309,8 +311,44 @@ public class MainActivity extends BridgeActivity {
             }
 
             android.net.Uri inboxUri = android.net.Uri.parse("content://sms/inbox");
-            // Query SMS from last 15 minutes only (prevent flood of historical SMS on fresh install)
-            long cutoffTime = System.currentTimeMillis() - (15 * 60 * 1000L);
+
+            // On fresh install, seed processedIds with all existing inbox SMS so historical messages before install aren't queued
+            if (isFirstRun) {
+                dispatchDebugToWebView("[MainActivity] Fresh install detected: Initializing SMS Inbox baseline...");
+                long seedCutoff = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L); // 7 days
+                android.database.Cursor seedCursor = context.getContentResolver().query(
+                    inboxUri,
+                    new String[]{"_id", "date"},
+                    "date > ?",
+                    new String[]{ String.valueOf(seedCutoff) },
+                    "date DESC"
+                );
+                if (seedCursor != null) {
+                    while (seedCursor.moveToNext()) {
+                        String id = seedCursor.getString(seedCursor.getColumnIndexOrThrow("_id"));
+                        long date = seedCursor.getLong(seedCursor.getColumnIndexOrThrow("date"));
+                        processedIds.add(id + "_" + date);
+                    }
+                    seedCursor.close();
+                }
+
+                JSONArray initProcessedArr = new JSONArray();
+                int limit = 0;
+                for (String key : processedIds) {
+                    initProcessedArr.put(key);
+                    limit++;
+                    if (limit > 500) break;
+                }
+                prefs.edit()
+                    .putBoolean("inbox_sync_initialized", true)
+                    .putString("processed_sms_ids", initProcessedArr.toString())
+                    .apply();
+                dispatchDebugToWebView("[MainActivity] Inbox baseline initialized (" + processedIds.size() + " existing SMS marked as seen).");
+                return;
+            }
+
+            // Normal sync: Look back 48 hours for any unhandled bank SMS received while app was closed
+            long cutoffTime = System.currentTimeMillis() - (48 * 60 * 60 * 1000L);
             String selection = "date > ?";
             String[] selectionArgs = new String[]{ String.valueOf(cutoffTime) };
             String sortOrder = "date DESC";
@@ -333,7 +371,7 @@ public class MainActivity extends BridgeActivity {
             JSONArray pendingArr = new JSONArray(pendingJson);
 
             while (cursor.moveToNext()) {
-                if (countNew >= 2) break; // Limit to max 2 missed SMS to avoid popup flooding
+                if (countNew >= 8) break; // Allow up to 8 unhandled missed bank SMS
 
                 String id = cursor.getString(cursor.getColumnIndexOrThrow("_id"));
                 String address = cursor.getString(cursor.getColumnIndexOrThrow("address"));
@@ -373,13 +411,13 @@ public class MainActivity extends BridgeActivity {
             }
             cursor.close();
 
-            // Save updated processed IDs (keep max 300)
+            // Save updated processed IDs (keep max 500)
             JSONArray updatedProcessedArr = new JSONArray();
             int limit = 0;
             for (String key : processedIds) {
                 updatedProcessedArr.put(key);
                 limit++;
-                if (limit > 300) break;
+                if (limit > 500) break;
             }
             prefs.edit().putString("processed_sms_ids", updatedProcessedArr.toString()).apply();
 

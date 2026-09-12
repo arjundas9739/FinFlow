@@ -31,6 +31,7 @@ public class MainActivity extends BridgeActivity {
         instance = this;
         createNotificationChannel();
         requestPermissions();
+        requestBatteryOptimizationExemption();
 
         dispatchDebugToWebView("[MainActivity] onCreate: App started. Scheduling pending SMS flush...");
 
@@ -243,6 +244,26 @@ public class MainActivity extends BridgeActivity {
             prefs.edit().putString("pending_native_logs", arr.toString()).apply();
         } catch (Exception e) {
             Log.e(TAG, "Error saving native log: " + e.getMessage(), e);
+        }
+    }
+
+    private void requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                String packageName = getPackageName();
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                    android.content.Intent intent = new android.content.Intent();
+                    intent.setAction(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(android.net.Uri.parse("package:" + packageName));
+                    startActivity(intent);
+                    dispatchDebugToWebView("[MainActivity] Requested battery optimization exemption prompt.");
+                } else {
+                    dispatchDebugToWebView("[MainActivity] Already ignoring battery optimizations.");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error requesting battery optimization exemption: " + e.getMessage());
+            }
         }
     }
 }

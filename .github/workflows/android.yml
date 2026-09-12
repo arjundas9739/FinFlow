@@ -26,6 +26,11 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Prepare Web Build Assets (www)
+        run: |
+          mkdir -p www
+          cp -r index.html app.js style.css sw.js manifest.json www/ || true
+
       - name: Install Dependencies & Sync Capacitor
         run: |
           npm install @capacitor/core@6 @capacitor/android@6 @capacitor/cli@6

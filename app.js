@@ -21,6 +21,11 @@ const STATE = {
   searchQuery:     '',
   analyticsPeriod: 'month',
   viewMode:        'monthly',   // 'monthly' | 'yearly'
+  insightPeriodMode: 'monthly', // 'monthly' | 'quarterly' | 'yearly' | 'custom'
+  insightQuarter:    'Q1',
+  insightYear:       new Date().getFullYear().toString(),
+  customStartDate:   new Date().toISOString().slice(0, 8) + '01',
+  customEndDate:     new Date().toISOString().slice(0, 10),
   isLocked:        false,
   editingCatId:    null,
   pinBuffer:       '',
@@ -850,168 +855,296 @@ function closeTxnDetail() { document.getElementById('txnDetail').classList.add('
 // ══════════════════════════════════════
 // INSIGHTS
 // ══════════════════════════════════════
+// ══════════════════════════════════════
+// INSIGHTS & PERIOD ANALYTICS
+// ══════════════════════════════════════
+function getTxnsForPeriod() {
+  const mode = STATE.insightPeriodMode || 'monthly';
+  if (mode === 'monthly') {
+    return txnsForMonth(STATE.currentMonth);
+  }
+  if (mode === 'quarterly') {
+    const yr = STATE.insightYear || new Date().getFullYear().toString();
+    const q = STATE.insightQuarter || 'Q1';
+    let qMonths = ['01', '02', '03'];
+    if (q === 'Q2') qMonths = ['04', '05', '06'];
+    if (q === 'Q3') qMonths = ['07', '08', '09'];
+    if (q === 'Q4') qMonths = ['10', '11', '12'];
+    return STATE.transactions.filter(t => {
+      if (!t.date || !t.date.startsWith(yr)) return false;
+      const m = t.date.slice(5, 7);
+      return qMonths.includes(m);
+    });
+  }
+  if (mode === 'yearly') {
+    const yr = STATE.insightYear || new Date().getFullYear().toString();
+    return STATE.transactions.filter(t => t.date && t.date.startsWith(yr));
+  }
+  if (mode === 'custom') {
+    const start = STATE.customStartDate || '2000-01-01';
+    const end = STATE.customEndDate || '2099-12-31';
+    return STATE.transactions.filter(t => t.date && t.date >= start && t.date <= end);
+  }
+  return STATE.transactions;
+}
+
+function summarizeTxnSet(txns) {
+  let income = 0, expense = 0, investment = 0, loan = 0, savings = 0;
+  (txns || []).forEach(t => {
+    const a = t.amount || 0;
+    if (t.type === 'income') income += a;
+    else if (t.type === 'expense') expense += a;
+    else if (t.type === 'investment') investment += a;
+    else if (t.type === 'loan') loan += a;
+    else if (t.type === 'savings') savings += a;
+  });
+  const net = income - expense - investment - loan - savings;
+  return { income, expense, investment, loan, savings, net };
+}
+
 function renderInsights() {
-  const el=document.createElement('div');
-  el.appendChild(buildMonthNav());
-
-  const ym=STATE.currentMonth;
-  const prevYm=prevMonth(ym);
-  const s=monthSummary(ym);
-  const sp=monthSummary(prevYm);
-  const txns=txnsForMonth(ym);
-  const expTxns=txns.filter(t=>t.type==='expense');
-  const totalExp=expTxns.reduce((a,t)=>a+t.amount,0);
-
-  // ── Score Card
-  const savRate = s.income>0 ? (s.income-s.expense)/s.income*100 : 0;
-  const budgetScore = calcBudgetScore(ym);
-  const score = Math.round((savRate*0.5 + budgetScore*0.5));
-  const scoreColor = score>=70?'#06d6a0':score>=40?'#ffd166':'#ff6b6b';
-  const scoreLabel = score>=70?'Excellent 🎉':score>=40?'Good 👍':'Needs Work ⚠️';
-  const scoreCard=document.createElement('div'); scoreCard.className='insight-card';
-  scoreCard.innerHTML=`
-    <div class="insight-card-accent" style="background:${scoreColor}"></div>
-    <div class="card-header" style="margin-bottom:0"><span class="card-title">Financial Health Score</span><span class="insight-badge badge-${score>=70?'green':score>=40?'yellow':'red'}">${scoreLabel}</span></div>
-    <div class="score-ring-wrap">
-      <div class="score-ring">
-        <svg width="130" height="130" viewBox="0 0 130 130">
-          <circle cx="65" cy="65" r="54" fill="none" stroke="var(--bg-card2)" stroke-width="12"/>
-          <circle cx="65" cy="65" r="54" fill="none" stroke="${scoreColor}" stroke-width="12"
-            stroke-dasharray="${2*Math.PI*54}" stroke-dashoffset="${2*Math.PI*54*(1-score/100)}"
-            stroke-linecap="round" style="transition:stroke-dashoffset 0.8s ease"/>
-        </svg>
-        <div class="score-ring-label">
-          <div class="score-ring-num" style="color:${scoreColor}">${score}</div>
-          <div class="score-ring-text">/ 100</div>
-        </div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">
-      <div style="text-align:center;padding:10px;background:var(--bg-card2);border-radius:10px">
-        <div style="font-size:0.7rem;color:var(--text-muted);font-weight:600">SAVINGS RATE</div>
-        <div style="font-size:1rem;font-weight:800;color:${savRate>=20?'var(--income-color)':'var(--expense-color)'};">${savRate.toFixed(1)}%</div>
-      </div>
-      <div style="text-align:center;padding:10px;background:var(--bg-card2);border-radius:10px">
-        <div style="font-size:0.7rem;color:var(--text-muted);font-weight:600">BUDGET SCORE</div>
-        <div style="font-size:1rem;font-weight:800;color:${budgetScore>=70?'var(--income-color)':'var(--loan-color)'};">${budgetScore}/100</div>
-      </div>
-    </div>
-  `;
-  el.appendChild(scoreCard);
-
-  // ── Daily Average & Projection
-  const daysInMonth = new Date(+ym.split('-')[0], +ym.split('-')[1], 0).getDate();
-  const today = new Date(); const dayOfMonth = today.getDate();
-  const isCurrentMonth = ym===new Date().toISOString().slice(0,7);
-  const daysPassed = isCurrentMonth ? dayOfMonth : daysInMonth;
-  const dailyAvg = daysPassed>0 ? totalExp/daysPassed : 0;
-  const projected = dailyAvg * daysInMonth;
-  const projCard=document.createElement('div'); projCard.className='insight-card';
-  projCard.innerHTML=`
-    <div class="insight-card-accent" style="background:var(--accent)"></div>
-    <div class="insight-header">
-      <div class="insight-icon" style="background:rgba(108,99,255,0.12)">📅</div>
-      <div style="flex:1">
-        <div class="insight-title">Daily Average Spend</div>
-        <div class="insight-value">${fmt(dailyAvg)}<span style="font-size:0.8rem;color:var(--text-muted);font-weight:500">/day</span></div>
-        <div class="insight-sub">${isCurrentMonth?`Projected month-end: <b>${fmt(projected)}</b>`:`Avg over ${daysInMonth} days`}</div>
-        ${isCurrentMonth&&projected>s.income?'<span class="insight-badge badge-red">⚠️ May exceed income</span>':''}
-      </div>
-    </div>
-  `;
-  el.appendChild(projCard);
-
-  // ── Month-over-Month Category Changes
-  const prevCatMap={};
-  txnsForMonth(prevYm).filter(t=>t.type==='expense').forEach(t=>prevCatMap[t.category]=(prevCatMap[t.category]||0)+t.amount);
-  const curCatMap={};
-  expTxns.forEach(t=>curCatMap[t.category]=(curCatMap[t.category]||0)+t.amount);
-
-  const changes=[];
-  const allCatIds=new Set([...Object.keys(curCatMap),...Object.keys(prevCatMap)]);
-  allCatIds.forEach(id=>{
-    const cur=curCatMap[id]||0, prev=prevCatMap[id]||0;
-    if(cur>0||prev>0) changes.push({ id, cur, prev, pct:prev>0?((cur-prev)/prev*100):null });
+  const el = document.createElement('div');
+  
+  // 1. Period Mode Tabs (Monthly / Quarterly / Yearly / Custom)
+  const tabWrap = document.createElement('div');
+  tabWrap.className = 'period-tab-bar';
+  ['monthly', 'quarterly', 'yearly', 'custom'].forEach(m => {
+    const btn = document.createElement('button');
+    btn.className = `period-tab ${STATE.insightPeriodMode === m ? 'active' : ''}`;
+    btn.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+    btn.onclick = () => { STATE.insightPeriodMode = m; renderPage(); };
+    tabWrap.appendChild(btn);
   });
-  changes.sort((a,b)=>Math.abs(b.cur)-Math.abs(a.cur));
+  el.appendChild(tabWrap);
 
-  if(changes.length>0) {
-    const momCard=document.createElement('div'); momCard.className='insight-card';
-    momCard.innerHTML=`<div class="insight-card-accent" style="background:var(--accent2)"></div><div class="card-header" style="margin-bottom:12px"><span class="card-title">Month-over-Month</span><span style="font-size:0.72rem;color:var(--text-muted)">vs ${monthLabel(prevYm)}</span></div>`;
-    changes.slice(0,5).forEach(ch=>{
-      const cat=getCat(ch.id);
-      const isNew=ch.prev===0;
-      const isUp=ch.pct>0;
-      const chgText=isNew?'New':ch.pct===null?'—':(isUp?'+':'')+ch.pct.toFixed(0)+'%';
-      const chgClass=isNew?'new':isUp?'up':'down';
-      const item=document.createElement('div'); item.className='category-tip-item';
-      item.innerHTML=`
-        <div style="width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;background:${cat.color}18">${(TYPE_META[ch.type]||{icon:'📦'}).icon||'📦'}</div>
-        <div class="cat-tip-info">
-          <div class="cat-tip-name">${cat.label}</div>
-          <div class="cat-tip-sub">${fmt(ch.cur)}${ch.prev>0?' (was '+fmt(ch.prev)+')':''}</div>
-        </div>
-        <div class="cat-tip-change ${chgClass}">${chgText}</div>
-      `;
-      momCard.appendChild(item);
-    });
-    el.appendChild(momCard);
-  }
-
-  // ── Budget Alerts
-  const budget=STATE.budgets[ym]||{};
-  const alerts=[];
-  Object.entries(budget).forEach(([catId,limit])=>{
-    const spent=curCatMap[catId]||0;
-    const pct=(spent/limit)*100;
-    if(pct>=80) alerts.push({catId,spent,limit,pct});
-  });
-  if(alerts.length>0) {
-    const alertCard=document.createElement('div'); alertCard.className='insight-card';
-    alertCard.innerHTML=`<div class="insight-card-accent" style="background:var(--expense-color)"></div><div class="card-header" style="margin-bottom:12px"><span class="card-title">Budget Alerts</span><span class="insight-badge badge-red">${alerts.length} alert${alerts.length>1?'s':''}</span></div>`;
-    alerts.forEach(a=>{
-      const cat=getCat(a.catId);
-      const fc=a.pct>=100?'danger':a.pct>=90?'warning':'';
-      const div=document.createElement('div'); div.className='budget-item'; div.style.marginBottom='8px';
-      div.innerHTML=`
-        <div class="budget-item-header">
-          <span class="budget-category" style="color:${cat.color}">${cat.label}</span>
-          <span class="budget-amounts">${fmt(a.spent)} / ${fmt(a.limit)}</span>
-        </div>
-        <div class="progress-bar"><div class="progress-fill ${fc}" style="width:${Math.min(100,a.pct)}%"></div></div>
-        <div style="font-size:0.72rem;color:var(--expense-color);margin-top:4px;font-weight:700">${a.pct>=100?'🔴 Budget exceeded!':'🟡 '+a.pct.toFixed(0)+'% used — almost there!'}</div>
-      `;
-      alertCard.appendChild(div);
-    });
-    el.appendChild(alertCard);
-  }
-
-  // ── Top Spending Day
-  const dayMap={};
-  expTxns.forEach(t=>{ const d=new Date(t.date+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long'}); dayMap[d]=(dayMap[d]||0)+t.amount; });
-  if(Object.keys(dayMap).length>0) {
-    const topDay=Object.entries(dayMap).sort((a,b)=>b[1]-a[1])[0];
-    const tipCard=document.createElement('div'); tipCard.className='insight-card';
-    tipCard.innerHTML=`
-      <div class="insight-card-accent" style="background:var(--loan-color)"></div>
-      <div class="insight-header">
-        <div class="insight-icon" style="background:rgba(255,209,102,0.12)">📅</div>
-        <div>
-          <div class="insight-title">Biggest Spending Day</div>
-          <div class="insight-value">${topDay[0]}</div>
-          <div class="insight-sub">You spend the most on <b>${topDay[0]}</b> — averaging <b>${fmt(topDay[1])}</b> this month.</div>
-          <span class="insight-badge badge-yellow">💡 Plan ahead for ${topDay[0]}</span>
-        </div>
+  // 2. Period Navigation Sub-Controls
+  const mode = STATE.insightPeriodMode;
+  if (mode === 'monthly') {
+    el.appendChild(buildMonthNav());
+  } else if (mode === 'quarterly') {
+    const qWrap = document.createElement('div');
+    qWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:14px;';
+    qWrap.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-card);padding:8px 12px;border-radius:10px;border:1px solid var(--border)">
+        <button class="month-nav-btn" id="prevYrQBtn">‹</button>
+        <span style="font-weight:800;font-size:0.95rem">Year ${STATE.insightYear}</span>
+        <button class="month-nav-btn" id="nextYrQBtn">›</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        ${['Q1', 'Q2', 'Q3', 'Q4'].map(q => `<button class="filter-chip ${STATE.insightQuarter === q ? 'active' : ''}" style="flex:1" data-q="${q}">${q}</button>`).join('')}
       </div>
     `;
-    el.appendChild(tipCard);
+    el.appendChild(qWrap);
+    setTimeout(() => {
+      const pBtn = qWrap.querySelector('#prevYrQBtn');
+      if (pBtn) pBtn.onclick = () => { STATE.insightYear = String(parseInt(STATE.insightYear) - 1); renderPage(); };
+      const nBtn = qWrap.querySelector('#nextYrQBtn');
+      if (nBtn) nBtn.onclick = () => { STATE.insightYear = String(parseInt(STATE.insightYear) + 1); renderPage(); };
+      qWrap.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { STATE.insightQuarter = b.dataset.q; renderPage(); });
+    }, 0);
+  } else if (mode === 'yearly') {
+    const yWrap = document.createElement('div');
+    yWrap.className = 'month-nav';
+    yWrap.innerHTML = `
+      <button class="month-nav-btn" id="prevYrBtn">‹</button>
+      <span class="month-nav-label">Year ${STATE.insightYear}</span>
+      <button class="month-nav-btn" id="nextYrBtn">›</button>
+    `;
+    el.appendChild(yWrap);
+    setTimeout(() => {
+      const pBtn = yWrap.querySelector('#prevYrBtn');
+      if (pBtn) pBtn.onclick = () => { STATE.insightYear = String(parseInt(STATE.insightYear) - 1); renderPage(); };
+      const nBtn = yWrap.querySelector('#nextYrBtn');
+      if (nBtn) nBtn.onclick = () => { STATE.insightYear = String(parseInt(STATE.insightYear) + 1); renderPage(); };
+    }, 0);
+  } else if (mode === 'custom') {
+    const cWrap = document.createElement('div');
+    cWrap.className = 'custom-range-bar';
+    cWrap.innerHTML = `
+      <div style="flex:1">
+        <label style="font-size:0.65rem;color:var(--text-muted);font-weight:700;display:block">FROM</label>
+        <input type="date" id="customStartInput" value="${STATE.customStartDate}" />
+      </div>
+      <div style="font-weight:700;color:var(--text-muted);margin-top:12px">→</div>
+      <div style="flex:1">
+        <label style="font-size:0.65rem;color:var(--text-muted);font-weight:700;display:block">TO</label>
+        <input type="date" id="customEndInput" value="${STATE.customEndDate}" />
+      </div>
+    `;
+    el.appendChild(cWrap);
+    setTimeout(() => {
+      const sInp = cWrap.querySelector('#customStartInput');
+      if (sInp) sInp.onchange = e => { STATE.customStartDate = e.target.value; renderPage(); };
+      const eInp = cWrap.querySelector('#customEndInput');
+      if (eInp) eInp.onchange = e => { STATE.customEndDate = e.target.value; renderPage(); };
+    }, 0);
   }
 
-  // ── Smart Tip
-  const tips = generateSmartTips(ym, s, sp, savRate);
-  tips.slice(0,2).forEach(tip=>{
-    const tipCard=document.createElement('div'); tipCard.className='insight-card';
-    tipCard.innerHTML=`
+  // 3. Extract Transactions & Summary
+  const txns = getTxnsForPeriod();
+  const s = summarizeTxnSet(txns);
+
+  // Period Banner Summary Card
+  const banner = document.createElement('div');
+  banner.className = 'balance-card';
+  let modeLabel = mode === 'monthly' ? monthLabel(STATE.currentMonth) : (mode === 'quarterly' ? `${STATE.insightQuarter} ${STATE.insightYear}` : (mode === 'yearly' ? `Year ${STATE.insightYear}` : `Custom Range`));
+  banner.innerHTML = `
+    <div class="balance-label">📊 ${modeLabel} Financial Overview</div>
+    <div class="balance-amount">${s.net >= 0 ? '' : '-'}${fmt(Math.abs(s.net))}</div>
+    <div class="balance-month">${s.net >= 0 ? 'Net Surplus saved' : 'Deficit / Overspent'}</div>
+    <div class="balance-chips">
+      <div class="balance-chip"><div class="chip-label">💰 Credit (Income)</div><div class="chip-value income-c">${fmtShort(s.income)}</div></div>
+      <div class="balance-chip"><div class="chip-label">💸 Debit (Expense)</div><div class="chip-value expense-c">${fmtShort(s.expense)}</div></div>
+    </div>
+  `;
+  el.appendChild(banner);
+
+  // 4. Financial Health Ratios (3-Grid)
+  const savRate = s.income > 0 ? (s.investment + s.savings + Math.max(0, s.net)) / s.income * 100 : 0;
+  const dtiRate = s.income > 0 ? (s.loan / s.income * 100) : 0;
+
+  // Emergency Runway: total accumulated liquid savings & investment across all time / avg monthly expense
+  const totalAccumulatedSavings = STATE.transactions.filter(t => t.type === 'investment' || t.type === 'savings').reduce((a, t) => a + t.amount, 0);
+  const totalAllExp = STATE.transactions.filter(t => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
+  const avgMonthlyExp = totalAllExp > 0 ? totalAllExp / Math.max(1, new Set(STATE.transactions.map(t => t.date.slice(0, 7))).size) : 1;
+  const runwayMonths = (totalAccumulatedSavings / (avgMonthlyExp || 1)).toFixed(1);
+
+  const ratioGrid = document.createElement('div');
+  ratioGrid.className = 'ratio-grid';
+  ratioGrid.innerHTML = `
+    <div class="ratio-card">
+      <div class="ratio-label">Wealth Rate</div>
+      <div class="ratio-val" style="color:${savRate >= 20 ? 'var(--income-color)' : savRate >= 10 ? 'var(--loan-color)' : 'var(--expense-color)'}">${savRate.toFixed(0)}%</div>
+      <div class="ratio-sub">${savRate >= 20 ? 'Target ≥20% 🎯' : 'Low savings ⚠️'}</div>
+    </div>
+    <div class="ratio-card">
+      <div class="ratio-label">EMI / Debt Ratio</div>
+      <div class="ratio-val" style="color:${dtiRate <= 35 ? 'var(--income-color)' : dtiRate <= 50 ? 'var(--loan-color)' : 'var(--expense-color)'}">${dtiRate.toFixed(0)}%</div>
+      <div class="ratio-sub">${dtiRate <= 35 ? 'Safe <35% 🟢' : 'High Debt 🔴'}</div>
+    </div>
+    <div class="ratio-card">
+      <div class="ratio-label">Emergency Fund</div>
+      <div class="ratio-val" style="color:${runwayMonths >= 6 ? 'var(--income-color)' : runwayMonths >= 3 ? 'var(--loan-color)' : 'var(--expense-color)'}">${runwayMonths}m</div>
+      <div class="ratio-sub">Covered months</div>
+    </div>
+  `;
+  el.appendChild(ratioGrid);
+
+  // 5. 50 / 30 / 20 Budget Rule Gauge Card
+  const needsCats = ['rent', 'utilities', 'groceries', 'health', 'education'];
+  let needsTotal = s.loan;
+  let wantsTotal = 0;
+  txns.filter(t => t.type === 'expense').forEach(t => {
+    if (needsCats.includes(t.category)) needsTotal += t.amount;
+    else wantsTotal += t.amount;
+  });
+  let investTotal = s.investment + s.savings + Math.max(0, s.net);
+  const totalBase = s.income > 0 ? s.income : (needsTotal + wantsTotal + investTotal || 1);
+
+  const needsPct = Math.min(100, Math.round(needsTotal / totalBase * 100));
+  const wantsPct = Math.min(100, Math.round(wantsTotal / totalBase * 100));
+  const investPct = Math.min(100, Math.round(investTotal / totalBase * 100));
+
+  const ruleCard = document.createElement('div');
+  ruleCard.className = 'rule-card';
+  ruleCard.innerHTML = `
+    <div class="card-header"><span class="card-title">50 / 30 / 20 Budget Rule Check</span><span class="insight-badge badge-purple">Standard Rule</span></div>
+    <div class="rule-row">
+      <div class="rule-header"><span style="color:#00d4aa">🏠 Needs (${needsPct}% / 50%)</span><span>${fmt(needsTotal)}</span></div>
+      <div class="progress-bar"><div class="progress-fill ${needsPct > 55 ? 'danger' : ''}" style="width:${needsPct}%;background:#00d4aa"></div></div>
+    </div>
+    <div class="rule-row">
+      <div class="rule-header"><span style="color:#ff6b6b">🛍️ Wants (${wantsPct}% / 30%)</span><span>${fmt(wantsTotal)}</span></div>
+      <div class="progress-bar"><div class="progress-fill ${wantsPct > 35 ? 'warning' : ''}" style="width:${wantsPct}%;background:#ff6b6b"></div></div>
+    </div>
+    <div class="rule-row">
+      <div class="rule-header"><span style="color:#6c63ff">📈 Investments (${investPct}% / 20%)</span><span>${fmt(investTotal)}</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${investPct}%;background:#6c63ff"></div></div>
+    </div>
+  `;
+  el.appendChild(ruleCard);
+
+  // 6. Interactive UI Graphs (Chart.js)
+  // A. Cashflow Bar Chart
+  const cashflowCard = document.createElement('div');
+  cashflowCard.className = 'card';
+  cashflowCard.innerHTML = `<div class="card-header"><span class="card-title">Cashflow Breakdown (${modeLabel})</span></div>`;
+  const cfWrap = document.createElement('div'); cfWrap.className = 'chart-container'; cfWrap.style.height = '200px';
+  const cfCanvas = document.createElement('canvas'); cfCanvas.id = 'insightsCashflowChart';
+  cfWrap.appendChild(cfCanvas); cashflowCard.appendChild(cfWrap);
+  el.appendChild(cashflowCard);
+
+  // B. Category Donut Chart
+  const catCard = document.createElement('div');
+  catCard.className = 'card';
+  catCard.innerHTML = `<div class="card-header"><span class="card-title">Expense Category Share</span></div>`;
+  const catWrap = document.createElement('div'); catWrap.className = 'chart-container'; catWrap.style.height = '200px';
+  const catCanvas = document.createElement('canvas'); catCanvas.id = 'insightsCategoryChart';
+  catWrap.appendChild(catCanvas); catCard.appendChild(catWrap);
+  el.appendChild(catCard);
+
+  // Render Charts after DOM mount
+  setTimeout(() => {
+    // 1. Cashflow Stacked Bar Chart
+    const typesData = [s.income, s.expense, s.investment, s.loan, s.savings];
+    new Chart(cfCanvas, {
+      type: 'bar',
+      data: {
+        labels: ['Income', 'Expense', 'Investment', 'EMI', 'Savings'],
+        datasets: [{
+          data: typesData,
+          backgroundColor: ['#06d6a0', '#ff6b6b', '#6c63ff', '#ffd166', '#00d4aa'],
+          borderRadius: 6,
+          borderSkipped: false
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#8b8fa8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color: '#8b8fa8', font: { size: 10 }, callback: v => fmtShort(v) }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      }
+    });
+
+    // 2. Category Donut Chart
+    const catMap = {};
+    txns.filter(t => t.type === 'expense').forEach(t => catMap[t.category] = (catMap[t.category] || 0) + t.amount);
+    const catLabels = Object.keys(catMap).map(id => getCat(id).label);
+    const catAmounts = Object.values(catMap);
+    const catColors = Object.keys(catMap).map(id => getCat(id).color);
+
+    if (catAmounts.length > 0) {
+      new Chart(catCanvas, {
+        type: 'doughnut',
+        data: {
+          labels: catLabels,
+          datasets: [{
+            data: catAmounts,
+            backgroundColor: catColors,
+            borderWidth: 2,
+            borderColor: '#0f0f1a'
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { color: '#8b8fa8', font: { size: 10 } } }
+          }
+        }
+      });
+    } else {
+      catWrap.innerHTML = '<div class="empty-state" style="padding:40px 0"><p>No expenses logged for this period.</p></div>';
+    }
+  }, 80);
+
+  // 7. Smart Tip Cards
+  const tips = generateSmartTips(STATE.currentMonth, s, { expense: 0 }, savRate);
+  tips.slice(0, 3).forEach(tip => {
+    const tipCard = document.createElement('div');
+    tipCard.className = 'insight-card';
+    tipCard.innerHTML = `
       <div class="insight-card-accent" style="background:var(--accent)"></div>
       <div class="insight-header">
         <div class="insight-icon" style="background:rgba(108,99,255,0.12)">${tip.icon}</div>

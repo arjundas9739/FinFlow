@@ -115,6 +115,33 @@ public class MainActivity extends BridgeActivity {
         }
         try {
             SharedPreferences prefs = instance.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+
+            // 1. Flush any saved background native debug logs first
+            String savedLogs = prefs.getString("pending_native_logs", "[]");
+            if (!"[]".equals(savedLogs)) {
+                JSONArray logArr = new JSONArray(savedLogs);
+                Log.d(TAG, "Flushing " + logArr.length() + " saved background native logs.");
+                for (int i = 0; i < logArr.length(); i++) {
+                    final String logMsg = logArr.optString(i, "");
+                    if (!logMsg.isEmpty()) {
+                        instance.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    if (instance.getBridge() != null && instance.getBridge().getWebView() != null) {
+                                        String escaped = logMsg.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
+                                        String js = "window.dispatchEvent(new CustomEvent('native_sms_debug', { detail: { log: '" + escaped + "' } }));";
+                                        instance.getBridge().getWebView().evaluateJavascript(js, null);
+                                    }
+                                } catch (Exception e) {}
+                            }
+                        });
+                    }
+                }
+                prefs.edit().remove("pending_native_logs").apply();
+            }
+
+            // 2. Flush pending SMS
             String pendingJson = prefs.getString("pending_sms", "[]");
             if ("[]".equals(pendingJson)) {
                 Log.d(TAG, "flushPendingSMS: No pending SMS.");
@@ -177,10 +204,15 @@ public class MainActivity extends BridgeActivity {
     /**
      * Dispatches a debug log message to the WebView's native_sms_debug event,
      * so it appears in the in-app debug log panel.
+     * If WebView is not ready, saves to SharedPreferences for later flushing.
      */
     public static void dispatchDebugToWebView(final String message) {
         Log.d(TAG, "[Debug] " + message);
-        if (instance == null) return;
+        if (instance == null) {
+            // App is closed — save log to SharedPreferences so it shows after restart
+            saveNativeLog(message);
+            return;
+        }
         instance.runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -189,11 +221,28 @@ public class MainActivity extends BridgeActivity {
                         String escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
                         String js = "window.dispatchEvent(new CustomEvent('native_sms_debug', { detail: { log: '" + escaped + "' } }));";
                         instance.getBridge().getWebView().evaluateJavascript(js, null);
+                    } else {
+                        // WebView loading — save for later
+                        saveNativeLog(message);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Error dispatching debug to WebView: " + e.getMessage(), e);
                 }
             }
         });
+    }
+
+    private static void saveNativeLog(String message) {
+        if (instance == null) return;
+        try {
+            SharedPreferences prefs = instance.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+            String existing = prefs.getString("pending_native_logs", "[]");
+            JSONArray arr = new JSONArray(existing);
+            arr.put("[BACKGROUND] " + message);
+            if (arr.length() > 100) arr.remove(0);
+            prefs.edit().putString("pending_native_logs", arr.toString()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving native log: " + e.getMessage(), e);
+        }
     }
 }

@@ -2017,6 +2017,15 @@ function init() {
   loadData();
   applyTheme(STATE.theme);
 
+  // Restore debug logs from last session
+  try {
+    const saved = localStorage.getItem('ff_debug_logs');
+    if (saved) {
+      debugLogsList = JSON.parse(saved);
+      logDebug('--- App Restarted. Previous session logs restored above ---');
+    }
+  } catch(e) {}
+
   setTimeout(()=>{
     document.getElementById('splash').style.display='none';
     const onboarded=localStorage.getItem('ff_onboarded');

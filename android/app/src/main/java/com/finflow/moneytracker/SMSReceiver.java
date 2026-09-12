@@ -20,11 +20,29 @@ import org.json.JSONObject;
 public class SMSReceiver extends BroadcastReceiver {
     private static final String TAG = "FinFlow_SMSReceiver";
 
+    /** Save a log message to SharedPreferences AND dispatch to WebView if app is open. */
+    private void nativeLog(Context context, String message) {
+        Log.d(TAG, message);
+        // Always save to SharedPreferences so logs survive even when app is closed
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+            String existing = prefs.getString("pending_native_logs", "[]");
+            JSONArray arr = new JSONArray(existing);
+            arr.put("[BACKGROUND] " + message);
+            if (arr.length() > 100) arr.remove(0);
+            prefs.edit().putString("pending_native_logs", arr.toString()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving native log: " + e.getMessage());
+        }
+        // Also dispatch to WebView if app is currently running
+        MainActivity.dispatchDebugToWebView("[SMSReceiver] " + message);
+    }
+
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent != null ? intent.getAction() : "null";
         Log.d(TAG, "=== SMS Broadcast onReceive called! Action: " + action + " ===");
-        MainActivity.dispatchDebugToWebView("[SMSReceiver] onReceive called. Action: " + action);
+        nativeLog(context, "onReceive called. Action: " + action);
 
         if (intent == null) {
             Log.e(TAG, "Intent is null!");
@@ -33,26 +51,25 @@ public class SMSReceiver extends BroadcastReceiver {
 
         if (!"android.provider.Telephony.SMS_RECEIVED".equals(action)) {
             Log.w(TAG, "Ignoring non-SMS action: " + action);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] Ignored (non-SMS action): " + action);
+            nativeLog(context, "Ignored (non-SMS action): " + action);
             return;
         }
 
         Bundle bundle = intent.getExtras();
         if (bundle == null) {
             Log.e(TAG, "Bundle is null in SMS intent!");
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR: Bundle is null!");
+            nativeLog(context, "ERROR: Bundle is null!");
             return;
         }
 
         try {
             Object[] pdus = (Object[]) bundle.get("pdus");
             String format = bundle.getString("format");
-            Log.d(TAG, "PDUs array: " + (pdus != null ? pdus.length + " parts" : "NULL") + " | Format: " + format);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] PDUs: " + (pdus != null ? pdus.length : "NULL") + " | Format: " + format);
+            nativeLog(context, "PDUs: " + (pdus != null ? pdus.length : "NULL") + " | Format: " + format);
 
             if (pdus == null || pdus.length == 0) {
                 Log.e(TAG, "No PDUs in bundle!");
-                MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR: No PDUs found!");
+                nativeLog(context, "ERROR: No PDUs found!");
                 return;
             }
 
@@ -75,29 +92,26 @@ public class SMSReceiver extends BroadcastReceiver {
 
             String messageBody = fullBody.toString();
             Log.i(TAG, "SMS assembled | From: " + sender + " | Body: " + messageBody);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] From: " + sender + "\nBody: " + messageBody);
+            nativeLog(context, "From: " + sender + " | Body: " + messageBody);
 
             if (messageBody.isEmpty()) {
-                Log.w(TAG, "Empty message body!");
-                MainActivity.dispatchDebugToWebView("[SMSReceiver] WARN: Empty message body. Skipping.");
+                nativeLog(context, "WARN: Empty message body. Skipping.");
                 return;
             }
 
             // Save & forward ALL SMS with digits (let JS decide if it's financial)
             if (messageBody.matches(".*\\d+.*")) {
-                Log.d(TAG, "SMS has digits - saving to pending queue and forwarding.");
-                MainActivity.dispatchDebugToWebView("[SMSReceiver] SMS has digits -> saving & forwarding to app.");
+                nativeLog(context, "SMS has digits -> saving & forwarding to app.");
                 savePendingSMS(context, sender, messageBody);
                 sendNotification(context, sender, messageBody);
                 MainActivity.flushPendingSMS();
             } else {
-                Log.d(TAG, "SMS has no digits - skipping.");
-                MainActivity.dispatchDebugToWebView("[SMSReceiver] SMS has no digits -> SKIPPED.");
+                nativeLog(context, "SMS has no digits -> SKIPPED.");
             }
 
         } catch (Exception e) {
             Log.e(TAG, "Error processing incoming SMS: " + e.getMessage(), e);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] EXCEPTION: " + e.getMessage());
+            nativeLog(context, "EXCEPTION: " + e.getMessage());
         }
     }
 
@@ -112,11 +126,9 @@ public class SMSReceiver extends BroadcastReceiver {
             obj.put("time", System.currentTimeMillis());
             arr.put(obj);
             prefs.edit().putString("pending_sms", arr.toString()).apply();
-            Log.d(TAG, "Saved pending SMS. Queue size: " + arr.length());
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] Saved to queue. Total pending: " + arr.length());
+            nativeLog(context, "Saved to queue. Total pending: " + arr.length());
         } catch (Exception e) {
-            Log.e(TAG, "Error saving pending SMS: " + e.getMessage(), e);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR saving to queue: " + e.getMessage());
+            nativeLog(context, "ERROR saving to queue: " + e.getMessage());
         }
     }
 
@@ -124,8 +136,7 @@ public class SMSReceiver extends BroadcastReceiver {
         try {
             if (Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "POST_NOTIFICATIONS permission not granted - skipping notification.");
-                MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification skipped (no POST_NOTIFICATIONS permission).");
+                nativeLog(context, "Notification skipped (no POST_NOTIFICATIONS permission).");
                 return;
             }
 
@@ -162,11 +173,9 @@ public class SMSReceiver extends BroadcastReceiver {
 
             NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
             notificationManager.notify((int) System.currentTimeMillis(), builder.build());
-            Log.d(TAG, "Notification sent successfully.");
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification sent.");
+            nativeLog(context, "Notification sent successfully.");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to send notification: " + e.getMessage(), e);
-            MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification ERROR: " + e.getMessage());
+            nativeLog(context, "Notification ERROR: " + e.getMessage());
         }
     }
 }

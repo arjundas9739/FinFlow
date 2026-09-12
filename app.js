@@ -1467,6 +1467,7 @@ function parseSMS(text) {
   // 4. Date Extraction (DD-MM-YYYY, DD/MM/YY, DD Mon YYYY)
   let date = todayStr();
   const datePats = [
+    /(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/,
     /(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/,
     /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{0,4})/i
   ];

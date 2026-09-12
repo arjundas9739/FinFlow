@@ -2164,6 +2164,21 @@ function importJSON() {
 }
 function downloadBlob(content, type, name) {
   logDebug(`[Download] Initiating export for "${name}" (${content ? content.length : 0} bytes)...`);
+
+  // 1. Try Capacitor Native Plugin (FinFlowNativeFile) — registered on app boot
+  const capPlugin = window.Capacitor?.Plugins?.FinFlowNativeFile;
+  if (capPlugin && typeof capPlugin.saveToDownloads === 'function') {
+    try {
+      capPlugin.saveToDownloads({ fileName: name, content, mimeType: type });
+      logDebug(`[Download] Saved via Capacitor Plugin for "${name}". Check Downloads folder!`);
+      showToast(`Exported to Downloads!`, '📤');
+      return;
+    } catch(e) {
+      logDebug(`[Download] Capacitor Plugin save failed: ${e.message}`);
+    }
+  }
+
+  // 2. Try window.FinFlowNativeFile (@JavascriptInterface)
   if (window.FinFlowNativeFile && typeof window.FinFlowNativeFile.saveToDownloads === 'function') {
     try {
       window.FinFlowNativeFile.saveToDownloads(name, content, type);
@@ -2174,7 +2189,7 @@ function downloadBlob(content, type, name) {
       logDebug(`[Download] Native saveToDownloads failed: ${e.message}`);
     }
   } else {
-    logDebug('[Download] window.FinFlowNativeFile not bound yet. Using Data URI fallback...');
+    logDebug('[Download] Native interfaces not bound yet. Using Data URI fallback...');
   }
 
   try {

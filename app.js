@@ -2030,6 +2030,14 @@ function importJSON() {
   inp.click();
 }
 function downloadBlob(content,type,name) {
+  if (window.FinFlowNativeFile && typeof window.FinFlowNativeFile.saveToDownloads === 'function') {
+    try {
+      window.FinFlowNativeFile.saveToDownloads(name, content, type);
+      return;
+    } catch(e) {
+      console.error("Native download failed, falling back to Blob URL", e);
+    }
+  }
   const blob=new Blob([content],{type});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=name; a.click();

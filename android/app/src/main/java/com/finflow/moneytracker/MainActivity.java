@@ -12,11 +12,15 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import com.getcapacitor.BridgeActivity;
-import org.json.JSONArray;
-import org.json.JSONObject;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.webkit.JavascriptInterface;
+import android.widget.Toast;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BridgeActivity {
@@ -29,6 +33,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
+        setupJavascriptInterface();
         createNotificationChannel();
         requestPermissions();
         requestBatteryOptimizationExemption();
@@ -40,6 +45,7 @@ public class MainActivity extends BridgeActivity {
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
+                setupJavascriptInterface();
                 dispatchDebugToWebView("[MainActivity] Flush attempt #1 (1.5s after start)");
                 flushPendingSMS();
             }
@@ -48,6 +54,7 @@ public class MainActivity extends BridgeActivity {
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
+                setupJavascriptInterface();
                 dispatchDebugToWebView("[MainActivity] Flush attempt #2 (4s after start)");
                 flushPendingSMS();
             }
@@ -58,6 +65,7 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         instance = this;
+        setupJavascriptInterface();
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -442,4 +450,73 @@ public class MainActivity extends BridgeActivity {
                lower.contains("axis") || lower.contains("kotak") || lower.contains("paytm") || lower.contains("gpay") ||
                lower.contains("phonepe") || lower.contains("bank") || lower.contains("vpa") || lower.contains("amazon in");
     }
+
+    private void setupJavascriptInterface() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (getBridge() != null && getBridge().getWebView() != null) {
+                        getBridge().getWebView().addJavascriptInterface(new NativeFileInterface(MainActivity.this), "FinFlowNativeFile");
+                        Log.d(TAG, "NativeFileInterface attached to WebView as 'FinFlowNativeFile'");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error setting up JavascriptInterface: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    public class NativeFileInterface {
+        private Context context;
+        public NativeFileInterface(Context context) {
+            this.context = context;
+        }
+
+        @JavascriptInterface
+        public void saveToDownloads(final String fileName, final String content, final String mimeType) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ContentValues values = new ContentValues();
+                    values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                    values.put(MediaStore.Downloads.MIME_TYPE, mimeType != null ? mimeType : "application/json");
+                    values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+
+                    Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                    if (uri != null) {
+                        OutputStream out = context.getContentResolver().openOutputStream(uri);
+                        out.write(content.getBytes(StandardCharsets.UTF_8));
+                        out.close();
+                        showToastOnMain("Saved to Download: " + fileName);
+                        dispatchDebugToWebView("[NativeFile] File saved to Downloads: " + fileName);
+                        return;
+                    }
+                }
+
+                // Fallback for older Android versions (< Android 10)
+                File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (!downloadDir.exists()) downloadDir.mkdirs();
+                File targetFile = new File(downloadDir, fileName);
+                FileOutputStream fos = new FileOutputStream(targetFile);
+                fos.write(content.getBytes(StandardCharsets.UTF_8));
+                fos.close();
+                showToastOnMain("Saved to Download: " + fileName);
+                dispatchDebugToWebView("[NativeFile] File saved to Download dir: " + targetFile.getAbsolutePath());
+            } catch (Exception e) {
+                Log.e(TAG, "Error saving file to Downloads: " + e.getMessage(), e);
+                showToastOnMain("Failed to save download: " + e.getMessage());
+                dispatchDebugToWebView("[NativeFile] Error saving download: " + e.getMessage());
+            }
+        }
+    }
+
+    private void showToastOnMain(final String message) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
 }
+

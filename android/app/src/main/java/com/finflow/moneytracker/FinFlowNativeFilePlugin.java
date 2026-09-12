@@ -37,17 +37,59 @@ public class FinFlowNativeFilePlugin extends Plugin {
         try {
             Log.d(TAG, "Capacitor Plugin saveToDownloads: " + fileName + " (length: " + content.length() + ")");
 
-            // 1. Direct file write to public Downloads directory
+            // 1. Android 10+ (API 29+) Scoped Storage compliant write via MediaStore ContentResolver
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    ContentValues values = new ContentValues();
+                    values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                    values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
+                    values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                    values.put(MediaStore.Downloads.IS_PENDING, 1);
+
+                    Uri uri = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                    if (uri != null) {
+                        OutputStream out = getContext().getContentResolver().openOutputStream(uri, "w");
+                        if (out != null) {
+                            out.write(content.getBytes(StandardCharsets.UTF_8));
+                            out.flush();
+                            out.close();
+                        }
+                        values.clear();
+                        values.put(MediaStore.Downloads.IS_PENDING, 0);
+                        getContext().getContentResolver().update(uri, values, null, null);
+
+                        if (getActivity() != null) {
+                            getActivity().runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(getContext(), "Saved to Downloads: " + fileName, Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        }
+
+                        MainActivity.dispatchDebugToWebView("[NativeFilePlugin] Saved to Downloads via MediaStore: " + fileName);
+                        call.resolve();
+                        return;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "MediaStore Q insert fallback info: " + e.getMessage());
+                }
+            }
+
+            // 2. Direct File Write (Pre-Android 10 or MediaStore fallback)
             File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             if (!downloadDir.exists()) downloadDir.mkdirs();
             File targetFile = new File(downloadDir, fileName);
+            if (targetFile.exists()) {
+                try { targetFile.delete(); } catch(Exception delErr) { Log.w(TAG, "Delete stale file info: " + delErr.getMessage()); }
+            }
             FileOutputStream fos = new FileOutputStream(targetFile, false);
             fos.write(content.getBytes(StandardCharsets.UTF_8));
             fos.flush();
             fos.close();
             Log.d(TAG, "File written: " + targetFile.getAbsolutePath());
 
-            // 2. Trigger MediaScannerConnection scan
+            // Trigger MediaScanner scan
             MediaScannerConnection.scanFile(
                 getContext(),
                 new String[]{ targetFile.getAbsolutePath() },
@@ -59,32 +101,6 @@ public class FinFlowNativeFilePlugin extends Plugin {
                     }
                 }
             );
-
-            // 3. MediaStore Q+ insertion with IS_PENDING 1 -> 0
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                try {
-                    ContentValues values = new ContentValues();
-                    values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
-                    values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
-                    values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                    values.put(MediaStore.Downloads.IS_PENDING, 1);
-
-                    Uri uri = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                    if (uri != null) {
-                        OutputStream out = getContext().getContentResolver().openOutputStream(uri);
-                        if (out != null) {
-                            out.write(content.getBytes(StandardCharsets.UTF_8));
-                            out.flush();
-                            out.close();
-                        }
-                        values.clear();
-                        values.put(MediaStore.Downloads.IS_PENDING, 0);
-                        getContext().getContentResolver().update(uri, values, null, null);
-                    }
-                } catch(Exception e) {
-                    Log.w(TAG, "MediaStore Q insert info: " + e.getMessage());
-                }
-            }
 
             if (getActivity() != null) {
                 getActivity().runOnUiThread(new Runnable() {

@@ -489,17 +489,50 @@ public class MainActivity extends BridgeActivity {
             try {
                 Log.d(TAG, "saveToDownloads called for: " + fileName + " (length: " + (content != null ? content.length() : 0) + ")");
                 
-                // 1. Direct file write to public Downloads directory
+                // 1. Android 10+ (API 29+) Scoped Storage compliant write via MediaStore ContentResolver
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        ContentValues values = new ContentValues();
+                        values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                        values.put(MediaStore.Downloads.MIME_TYPE, mimeType != null ? mimeType : "application/json");
+                        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                        values.put(MediaStore.Downloads.IS_PENDING, 1);
+
+                        Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                        if (uri != null) {
+                            OutputStream out = context.getContentResolver().openOutputStream(uri, "w");
+                            if (out != null) {
+                                out.write(content.getBytes(StandardCharsets.UTF_8));
+                                out.flush();
+                                out.close();
+                            }
+                            values.clear();
+                            values.put(MediaStore.Downloads.IS_PENDING, 0);
+                            context.getContentResolver().update(uri, values, null, null);
+
+                            showToastOnMain("Saved to Downloads: " + fileName);
+                            dispatchDebugToWebView("[NativeFile] Saved to Downloads via MediaStore: " + fileName);
+                            return;
+                        }
+                    } catch(Exception e) {
+                        Log.w(TAG, "MediaStore Q insert info: " + e.getMessage());
+                    }
+                }
+
+                // 2. Direct File Write (Pre-Android 10 or MediaStore fallback)
                 File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
                 if (!downloadDir.exists()) downloadDir.mkdirs();
                 File targetFile = new File(downloadDir, fileName);
-                FileOutputStream fos = new FileOutputStream(targetFile, false); // Overwrite existing file
+                if (targetFile.exists()) {
+                    try { targetFile.delete(); } catch(Exception delErr) {}
+                }
+                FileOutputStream fos = new FileOutputStream(targetFile, false);
                 fos.write(content.getBytes(StandardCharsets.UTF_8));
                 fos.flush();
                 fos.close();
                 Log.d(TAG, "File written to filesystem: " + targetFile.getAbsolutePath());
 
-                // 2. Trigger MediaScannerConnection scan so Files app indexes it immediately
+                // Trigger MediaScannerConnection scan
                 MediaScannerConnection.scanFile(
                     context,
                     new String[]{ targetFile.getAbsolutePath() },
@@ -511,32 +544,6 @@ public class MainActivity extends BridgeActivity {
                         }
                     }
                 );
-
-                // 3. Android 10+ MediaStore insertion with IS_PENDING 1 -> 0 cycle for instant visibility
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        ContentValues values = new ContentValues();
-                        values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
-                        values.put(MediaStore.Downloads.MIME_TYPE, mimeType != null ? mimeType : "application/json");
-                        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                        values.put(MediaStore.Downloads.IS_PENDING, 1);
-
-                        Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                        if (uri != null) {
-                            OutputStream out = context.getContentResolver().openOutputStream(uri);
-                            if (out != null) {
-                                out.write(content.getBytes(StandardCharsets.UTF_8));
-                                out.flush();
-                                out.close();
-                            }
-                            values.clear();
-                            values.put(MediaStore.Downloads.IS_PENDING, 0);
-                            context.getContentResolver().update(uri, values, null, null);
-                        }
-                    } catch(Exception e) {
-                        Log.w(TAG, "MediaStore Q insert info: " + e.getMessage());
-                    }
-                }
 
                 showToastOnMain("Saved to Downloads: " + fileName);
                 dispatchDebugToWebView("[NativeFile] File saved to Downloads: " + fileName + " (" + targetFile.getAbsolutePath() + ")");

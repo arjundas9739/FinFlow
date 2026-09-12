@@ -1415,8 +1415,12 @@ function closeSmsModal() { document.getElementById('smsModal').classList.add('hi
 function parseSMS(text) {
   if(!text?.trim()) return null;
 
-  // 0. Pre-cleaning: Strip Avl bal / Available balance AND customer care disclaimers (Not You? Call 1800...)
-  let cleanedText = text
+  // Ignore non-transactional informational SMS (Reminders, Statements, Mandates, Logins, Registrations, Points)
+  if (/\b(?:Reminder|Statement|Mandate|Initiated|Activated|Login Alert|Biometric Login|Card Renewal|Reward Points|Welcome kit)\b/i.test(text) &&
+      !/\b(?:debited|credited|sent|spent|withdrawn|deposited)\b/i.test(text)) {
+    return null;
+  }
+
   // Clean text by stripping balance disclaimers and block notices
   const cleanedText = text
     .split(/(?:Avl|Available|Net)\s*(?:bal|balance)\s*:?/i)[0]
@@ -1426,10 +1430,8 @@ function parseSMS(text) {
   // 1. Amount Extraction
   const amtPatterns = [
     /(?:Rs\.?|INR|₹|Amt\.?|Amount)\s*:?\s*([\d,]+\.?\d*)/i,
-    /(?:deposited|credited|debited|paid|spent|transferred|sent|withdrawn|deducted|payment|txn)\s+(?:in|to|from|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-    /([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i,
-    /(?:VPA|UPI|Ref)\s+[\w@.-]+\s+for\s+([\d,]+\.?\d*)/i,
-    /(?:by|for|of)\s+(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i
+    /(?:deposited|credited|debited|paid|spent|sent|transferred|withdrawn|deducted|payment|txn)\s+(?:in|to|from|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i
   ];
 
   let amount = null;
@@ -1443,72 +1445,91 @@ function parseSMS(text) {
   if (!amount) return null;
 
   // 2. Credit vs Debit Classification
-  const isCredit = /\b(?:deposited|deposited in|credited|credited to|credited in|credit|received|salary|added|refund|cashback|interest|dividend|inward)\b/i.test(cleanedText) ||
+  const isCredit = /\b(?:deposited|deposited in|credited|credited to|credited in|credit|received|salary|added|refund|cashback|interest|dividend|inward|reversed|reversed in)\b/i.test(cleanedText) ||
                    /\bCr-|\bCr\b/i.test(cleanedText);
 
-  const isDebit = /\b(?:debited|debited from|debit|dr|spent|spent on|paid|paid to|deducted|withdrawn|wdl|purchase)\b/i.test(cleanedText);
+  const isDebit = /\b(?:debited|debited from|debit|dr|spent|spent on|paid|paid to|deducted|withdrawn|wdl|purchase|sent)\b/i.test(cleanedText) ||
+                  /^Sent\s+Rs/i.test(cleanedText) || /^Txn\s+Rs/i.test(cleanedText);
 
   let type = 'expense';
   if (isCredit && !isDebit) {
     type = 'income';
   } else if (isCredit && isDebit) {
-    if (/\b(?:deposited|credited|received|salary|refund)\b/i.test(cleanedText)) {
+    if (/\b(?:deposited|credited|received|salary|refund|reversed)\b/i.test(cleanedText)) {
       type = 'income';
     }
   }
 
-  if (/\b(?:emi|loan repayment|home loan|car loan|personal loan)\b/i.test(cleanedText)) {
+  if (/\b(?:emi|loan repayment|home loan|car loan|personal loan)\b/i.test(cleanedText) || /Info:\s*EMI/i.test(cleanedText)) {
     type = 'loan';
-  } else if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing)\b/i.test(cleanedText)) {
+  } else if (/\b(?:mutual fund|sip|groww|zerodha|upstox|coin|clearing corp|indian clearing)\b/i.test(cleanedText) || /Indian Clearing Corporation/i.test(cleanedText)) {
     type = 'investment';
-  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit)\b/i.test(cleanedText)) {
+  } else if (/\b(?:emergency fund|recurring deposit|fd|rd|fixed deposit)\b/i.test(cleanedText) || /RD Installment/i.test(cleanedText)) {
     type = 'savings';
   }
 
   // 3. Merchant / Description Extraction
   let description = '';
 
-  // NEFT / RTGS pattern: e.g. "for NEFT Cr-SBIN0004266-ACTEVIA TECHNOLOGY SERVICES PRIVATE-Venkatesh K V..."
-  const neftMatch = cleanedText.match(/NEFT\s+(?:Cr|Dr)-[A-Z0-9]+-([A-Za-z0-9\s&'.-]+?)(?:-[A-Za-z0-9]+|$)/i) ||
-                    cleanedText.match(/(?:NEFT|RTGS|IMPS)[-\s\w]*?-([A-Za-z0-9\s&'.-]+?)(?:-[A-Z0-9]+|\.|$)/i);
-  if (neftMatch && neftMatch[1]) {
-    let rawDesc = neftMatch[1].trim();
-    if (rawDesc.length >= 3 && !/^(Cr|Dr|SBIN\d+)$/i.test(rawDesc)) {
-      description = rawDesc;
+  // Pattern: "To [Recipient]" (e.g. "To MOHAMMED MATHEEN S", "To Google India Digital Services")
+  const toMatch = cleanedText.match(/To\s+([A-Za-z0-9\s&'.-]{2,60}?)(?:\r?\n|On\s+\d|\.|$)/i);
+  if (toMatch && toMatch[1]) {
+    let raw = toMatch[1].trim();
+    if (!/^(HDFC|Bank|Card|A\/C)$/i.test(raw)) {
+      description = raw;
     }
   }
 
-  // IMPS pattern: e.g. "IMPS-67890123-AMAZON REFUND"
+  // Pattern: "At [Merchant/VPA]" (e.g. "At zepto.payu@axisbank", "At paytmqr67afy7@ptys", "At GPL HUB")
   if (!description) {
-    const impsMatch = cleanedText.match(/IMPS(?:-Cr|-Dr)?-\d+-([A-Za-z0-9\s&'.-]+)/i);
-    if (impsMatch && impsMatch[1]) {
-      description = impsMatch[1].trim();
+    const atMatch = cleanedText.match(/At\s+([A-Za-z0-9._\s@-]{2,40}?)(?:\s+Via|\s+by|\s+On|\s+ref|\n|\.|$)/i);
+    if (atMatch && atMatch[1]) {
+      let raw = atMatch[1].trim();
+      if (raw.includes('@')) {
+        let handle = raw.split('@')[0];
+        if (handle.startsWith('zepto')) raw = 'Zepto';
+        else if (handle.startsWith('paytm')) raw = 'Paytm Merchant';
+        else if (handle.startsWith('gpay')) raw = 'Google Pay Merchant';
+        else if (handle.startsWith('amzn')) raw = 'Amazon';
+        else if (handle.startsWith('bmtc')) raw = 'BMTC Bus';
+        else if (handle.startsWith('pizzahut')) raw = 'Pizza Hut';
+        else if (handle.startsWith('bharatpe')) raw = 'BharatPe Merchant';
+        else raw = handle;
+      }
+      description = raw;
     }
   }
 
-  // UPI pattern: e.g. "info UPI/123456/Company/company@icici" or "to VPA merchant@paytm"
+  // Pattern: "towards [Entity]" (e.g. "towards ICICI BANK LIMITED", "towards Indian Clearing Corporation")
   if (!description) {
-    const upiMatch = cleanedText.match(/info\s+UPI\/[^\/]+\/([^\/]+)/i) ||
-                     cleanedText.match(/(?:to|from)\s+VPA\s+([A-Za-z0-9._-]+)/i);
-    if (upiMatch && upiMatch[1]) {
-      description = upiMatch[1].trim();
+    const towardsMatch = cleanedText.match(/towards\s+([A-Za-z0-9\s&'.-]{2,40}?)(?:\s+UMRN|\.|$)/i);
+    if (towardsMatch && towardsMatch[1]) {
+      description = towardsMatch[1].trim();
     }
   }
 
-  // Card / Merchant pattern: e.g. "Card 4066 At WWW AMAZON IN On" or "at RELIANCE RETAIL"
+  // Pattern: "from VPA [Address]" (e.g. "from VPA nandalakshman766@okhdfcbank")
   if (!description) {
-    const cardMatch = cleanedText.match(/(?:at|at\s+WWW\.?)\s+([A-Za-z0-9\s&'.-]{2,30}?)(?:\s+on|\s+ref|\.|$)/i);
-    if (cardMatch && cardMatch[1]) {
-      let rawDesc = cardMatch[1].trim();
-      if (!/^(HDFC|Bank|Card|A\/C)$/i.test(rawDesc)) {
+    const vpaMatch = cleanedText.match(/from\s+VPA\s+([A-Za-z0-9._-]+)/i);
+    if (vpaMatch && vpaMatch[1]) {
+      description = vpaMatch[1].split('@')[0];
+    }
+  }
+
+  // Pattern: NEFT / RTGS / IMPS
+  if (!description) {
+    const neftMatch = cleanedText.match(/(?:NEFT|RTGS|IMPS)[-\s\w]*?-([A-Za-z0-9\s&'.-]+?)(?:-[A-Z0-9]+|\.|$)/i);
+    if (neftMatch && neftMatch[1]) {
+      let rawDesc = neftMatch[1].trim();
+      if (rawDesc.length >= 3 && !/^(Cr|Dr|SBIN\d+)$/i.test(rawDesc)) {
         description = rawDesc;
       }
     }
   }
 
-  // ATM pattern: e.g. "ATM WDL - HDFC BANK ATM BANGALORE"
-  if (!description && /ATM/i.test(cleanedText)) {
-    const atmMatch = cleanedText.match(/ATM\s+(?:WDL\s*-\s*)?([A-Za-z0-9\s.-]+)/i);
+  // ATM pattern: e.g. "ATM WDL - HDFC BANK ATM BANGALORE" or "Withdrawn Rs... At +MANJUNATH NAGAR"
+  if (!description && /ATM|Withdrawn/i.test(cleanedText)) {
+    const atmMatch = cleanedText.match(/(?:ATM|At)\s+(?:\+\s*)?([A-Za-z0-9\s.-]+?)(?:\s+On|\.|$)/i);
     if (atmMatch && atmMatch[1]) {
       description = atmMatch[1].trim();
     }

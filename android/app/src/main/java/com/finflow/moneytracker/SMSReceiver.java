@@ -21,40 +21,82 @@ public class SMSReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        Log.d(TAG, "SMS Broadcast received! Action: " + (intent != null ? intent.getAction() : "null"));
-        if (intent != null && "android.provider.Telephony.SMS_RECEIVED".equals(intent.getAction())) {
-            Bundle bundle = intent.getExtras();
-            if (bundle != null) {
-                try {
-                    Object[] pdus = (Object[]) bundle.get("pdus");
-                    String format = bundle.getString("format");
-                    if (pdus != null) {
-                        for (Object pdu : pdus) {
-                            SmsMessage smsMessage;
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                smsMessage = SmsMessage.createFromPdu((byte[]) pdu, format);
-                            } else {
-                                smsMessage = SmsMessage.createFromPdu((byte[]) pdu);
-                            }
+        String action = intent != null ? intent.getAction() : "null";
+        Log.d(TAG, "=== SMS Broadcast onReceive called! Action: " + action + " ===");
+        MainActivity.dispatchDebugToWebView("[SMSReceiver] onReceive called. Action: " + action);
 
-                            if (smsMessage != null) {
-                                String sender = smsMessage.getDisplayOriginatingAddress();
-                                String messageBody = smsMessage.getMessageBody();
+        if (intent == null) {
+            Log.e(TAG, "Intent is null!");
+            return;
+        }
 
-                                Log.i(TAG, "SMS Received from: " + sender + " | Body: " + messageBody);
+        if (!"android.provider.Telephony.SMS_RECEIVED".equals(action)) {
+            Log.w(TAG, "Ignoring non-SMS action: " + action);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] Ignored (non-SMS action): " + action);
+            return;
+        }
 
-                                if (messageBody != null && messageBody.matches(".*\\d+.*")) {
-                                    savePendingSMS(context, sender, messageBody);
-                                    sendNotification(context, sender, messageBody);
-                                    MainActivity.flushPendingSMS();
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error processing incoming SMS: " + e.getMessage(), e);
+        Bundle bundle = intent.getExtras();
+        if (bundle == null) {
+            Log.e(TAG, "Bundle is null in SMS intent!");
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR: Bundle is null!");
+            return;
+        }
+
+        try {
+            Object[] pdus = (Object[]) bundle.get("pdus");
+            String format = bundle.getString("format");
+            Log.d(TAG, "PDUs array: " + (pdus != null ? pdus.length + " parts" : "NULL") + " | Format: " + format);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] PDUs: " + (pdus != null ? pdus.length : "NULL") + " | Format: " + format);
+
+            if (pdus == null || pdus.length == 0) {
+                Log.e(TAG, "No PDUs in bundle!");
+                MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR: No PDUs found!");
+                return;
+            }
+
+            // Assemble multipart SMS
+            StringBuilder fullBody = new StringBuilder();
+            String sender = null;
+            for (Object pdu : pdus) {
+                SmsMessage smsMessage;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    smsMessage = SmsMessage.createFromPdu((byte[]) pdu, format);
+                } else {
+                    smsMessage = SmsMessage.createFromPdu((byte[]) pdu);
+                }
+                if (smsMessage != null) {
+                    if (sender == null) sender = smsMessage.getDisplayOriginatingAddress();
+                    String part = smsMessage.getMessageBody();
+                    if (part != null) fullBody.append(part);
                 }
             }
+
+            String messageBody = fullBody.toString();
+            Log.i(TAG, "SMS assembled | From: " + sender + " | Body: " + messageBody);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] From: " + sender + "\nBody: " + messageBody);
+
+            if (messageBody.isEmpty()) {
+                Log.w(TAG, "Empty message body!");
+                MainActivity.dispatchDebugToWebView("[SMSReceiver] WARN: Empty message body. Skipping.");
+                return;
+            }
+
+            // Save & forward ALL SMS with digits (let JS decide if it's financial)
+            if (messageBody.matches(".*\\d+.*")) {
+                Log.d(TAG, "SMS has digits - saving to pending queue and forwarding.");
+                MainActivity.dispatchDebugToWebView("[SMSReceiver] SMS has digits -> saving & forwarding to app.");
+                savePendingSMS(context, sender, messageBody);
+                sendNotification(context, sender, messageBody);
+                MainActivity.flushPendingSMS();
+            } else {
+                Log.d(TAG, "SMS has no digits - skipping.");
+                MainActivity.dispatchDebugToWebView("[SMSReceiver] SMS has no digits -> SKIPPED.");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing incoming SMS: " + e.getMessage(), e);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] EXCEPTION: " + e.getMessage());
         }
     }
 
@@ -69,9 +111,11 @@ public class SMSReceiver extends BroadcastReceiver {
             obj.put("time", System.currentTimeMillis());
             arr.put(obj);
             prefs.edit().putString("pending_sms", arr.toString()).apply();
-            Log.d(TAG, "Saved pending SMS to SharedPreferences. Total: " + arr.length());
+            Log.d(TAG, "Saved pending SMS. Queue size: " + arr.length());
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] Saved to queue. Total pending: " + arr.length());
         } catch (Exception e) {
             Log.e(TAG, "Error saving pending SMS: " + e.getMessage(), e);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] ERROR saving to queue: " + e.getMessage());
         }
     }
 
@@ -79,13 +123,14 @@ public class SMSReceiver extends BroadcastReceiver {
         try {
             if (Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "Cannot post notification: POST_NOTIFICATIONS permission not granted");
+                Log.w(TAG, "POST_NOTIFICATIONS permission not granted - skipping notification.");
+                MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification skipped (no POST_NOTIFICATIONS permission).");
                 return;
             }
 
             Intent openIntent = new Intent(context, MainActivity.class);
             openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            
+
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 flags |= PendingIntent.FLAG_IMMUTABLE;
@@ -95,7 +140,7 @@ public class SMSReceiver extends BroadcastReceiver {
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(context, MainActivity.CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("⚡ FinFlow: SMS Received")
+                    .setContentTitle("⚡ FinFlow: Bank SMS Detected")
                     .setContentText("Tap to review transaction from " + (sender != null ? sender : "Bank"))
                     .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -103,10 +148,12 @@ public class SMSReceiver extends BroadcastReceiver {
                     .setAutoCancel(true);
 
             NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
-            int notificationId = (int) System.currentTimeMillis();
-            notificationManager.notify(notificationId, builder.build());
+            notificationManager.notify((int) System.currentTimeMillis(), builder.build());
+            Log.d(TAG, "Notification sent successfully.");
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification sent.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to send notification: " + e.getMessage(), e);
+            MainActivity.dispatchDebugToWebView("[SMSReceiver] Notification ERROR: " + e.getMessage());
         }
     }
 }

@@ -796,8 +796,8 @@ function renderYearlyView() {
       data: {
         labels,
         datasets: [
-          {label:'Income',  data:incomes,  backgroundColor:'rgba(6,214,160,0.75)',  borderRadius:5, borderSkipped:false},
-          {label:'Expense', data:expenses, backgroundColor:'rgba(255,107,107,0.75)', borderRadius:5, borderSkipped:false},
+          {label:'Credit',  data:incomes,  backgroundColor:'rgba(6,214,160,0.75)',  borderRadius:5, borderSkipped:false},
+          {label:'Debit', data:expenses, backgroundColor:'rgba(255,107,107,0.75)', borderRadius:5, borderSkipped:false},
         ]
       },
       options: {

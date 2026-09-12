@@ -1,7 +1,10 @@
 package com.finflow.moneytracker;
 
 import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import androidx.core.app.ActivityCompat;
@@ -11,24 +14,59 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "FinFlow_MainActivity";
     private static final int SMS_PERMISSION_CODE = 101;
+    public static final String CHANNEL_ID = "finflow_alerts";
     private static MainActivity instance;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
-        requestSMSPermissions();
+        createNotificationChannel();
+        requestPermissions();
     }
 
-    private void requestSMSPermissions() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
-            
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS},
-                    SMS_PERMISSION_CODE);
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            CharSequence name = "FinFlow Bank Alerts";
+            String description = "Notifications for auto-detected bank transactions";
+            int importance = NotificationManager.IMPORTANCE_HIGH;
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, name, importance);
+            channel.setDescription(description);
+
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.createNotificationChannel(channel);
+                Log.d(TAG, "Notification channel created: " + CHANNEL_ID);
+            }
+        }
+    }
+
+    private void requestPermissions() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                
+                ActivityCompat.requestPermissions(this,
+                        new String[]{
+                            Manifest.permission.RECEIVE_SMS, 
+                            Manifest.permission.READ_SMS, 
+                            Manifest.permission.POST_NOTIFICATIONS
+                        },
+                        SMS_PERMISSION_CODE);
+            } else {
+                Log.d(TAG, "Permissions already granted.");
+            }
         } else {
-            Log.d(TAG, "SMS Permissions already granted.");
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+                
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS},
+                        SMS_PERMISSION_CODE);
+            } else {
+                Log.d(TAG, "Permissions already granted.");
+            }
         }
     }
 

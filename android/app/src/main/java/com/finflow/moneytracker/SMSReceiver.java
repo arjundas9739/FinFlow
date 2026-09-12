@@ -3,9 +3,14 @@ package com.finflow.moneytracker;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.telephony.SmsMessage;
 import android.util.Log;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 
 public class SMSReceiver extends BroadcastReceiver {
     private static final String TAG = "FinFlow_SMSReceiver";
@@ -21,7 +26,7 @@ public class SMSReceiver extends BroadcastReceiver {
                     if (pdus != null) {
                         for (Object pdu : pdus) {
                             SmsMessage smsMessage;
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                 smsMessage = SmsMessage.createFromPdu((byte[]) pdu, format);
                             } else {
                                 smsMessage = SmsMessage.createFromPdu((byte[]) pdu);
@@ -35,6 +40,7 @@ public class SMSReceiver extends BroadcastReceiver {
                             if (isFinancialSMS(messageBody)) {
                                 Log.i(TAG, "Financial SMS detected! Forwarding to FinFlow engine...");
                                 MainActivity.onSMSReceived(sender, messageBody);
+                                sendNotification(context, sender, messageBody);
                             }
                         }
                     }
@@ -42,6 +48,30 @@ public class SMSReceiver extends BroadcastReceiver {
                     Log.e(TAG, "Error processing incoming SMS: " + e.getMessage(), e);
                 }
             }
+        }
+    }
+
+    private void sendNotification(Context context, String sender, String body) {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "Cannot post notification: POST_NOTIFICATIONS permission not granted");
+                return;
+            }
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, MainActivity.CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("⚡ FinFlow: Bank SMS Auto-Logged")
+                    .setContentText("Detected transaction from " + (sender != null ? sender : "Bank"))
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true);
+
+            NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
+            int notificationId = (int) System.currentTimeMillis();
+            notificationManager.notify(notificationId, builder.build());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send notification: " + e.getMessage(), e);
         }
     }
 

@@ -1414,25 +1414,92 @@ function closeSmsModal() { document.getElementById('smsModal').classList.add('hi
 
 function parseSMS(text) {
   if(!text?.trim()) return null;
-  const amtPatterns=[/(?:Rs\.?|INR|₹)\s*([\d,]+\.?\d*)/i,/(?:debited|credited|paid|received)\s+(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,/([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i];
-  let amount=null;
-  for(const p of amtPatterns){ const m=text.match(p); if(m){ amount=parseFloat(m[1].replace(/,/g,'')); break; } }
-  if(!amount) return null;
-  const isCredit=/credited|credit|received|salary|added|deposit|refund|cashback|interest|dividend/i.test(text);
-  const isDebit=/debited|debit|paid|spent|purchase|withdrawn|payment|emi/i.test(text);
-  let type='expense';
-  if(isCredit&&!isDebit) type=/salary|wage/i.test(text)?'income':'income';
-  else if(/emi|loan/i.test(text)) type='loan';
-  let description='';
-  const descPatterns=[/(?:at|to|from|for|via)\s+([A-Z][A-Za-z0-9\s&'.]{2,30})/i,/UPI[\s\-]+(?:to|from)?\s*([A-Z][A-Za-z0-9\s]{2,25})/i];
-  for(const p of descPatterns){ const m=text.match(p); if(m){ description=m[1].trim(); break; } }
-  let date=todayStr();
-  const datePats=[/(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/,/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{2,4})/i];
-  for(const p of datePats){ const m=text.match(p); if(m){ try{ const d=new Date(m[1]); if(!isNaN(d)) date=d.toISOString().slice(0,10); }catch(e){} break; } }
-  let category=type==='income'?'salary':'other_exp';
-  const catKw={food:/zomato|swiggy|restaurant|cafe|food|dining|pizza|burger/i,transport:/uber|ola|petrol|fuel|cab|taxi|metro|toll/i,shopping:/amazon|flipkart|myntra|mall|store|mart/i,health:/pharmacy|medical|hospital|clinic|doctor/i,utilities:/electricity|water|broadband|wifi|internet|bsnl|airtel|jio|bill/i,entertainment:/netflix|spotify|hotstar|movie|pvr/i,emi:/emi|loan repayment/i,salary:/salary|wages|payroll/i,mutual_fund:/mutual fund|sip|groww|zerodha/i,stocks:/nse|bse|stock|equity/i};
-  for(const[cat,re] of Object.entries(catKw)){ if(re.test(text)){ category=cat; break; } }
-  return {amount,type,category,description,date};
+
+  // 1. Amount Extraction (supports Rs, Rs., INR, ₹, Amt, Amount)
+  const amtPatterns = [
+    /(?:Rs\.?|INR|₹|Amt\.?|Amount)\s*:?\s*([\d,]+\.?\d*)/i,
+    /(?:debited|credited|paid|received|spent|transferred|sent|withdrawn)\s+(?:for\s+)?(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /([\d,]+\.?\d*)\s*(?:Rs\.?|INR|₹)/i,
+    /(?:VPA|UPI|Ref)\s+[\w@.-]+\s+for\s+([\d,]+\.?\d*)/i,
+    /(?:by|for|of)\s+(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i
+  ];
+
+  let amount = null;
+  for (const p of amtPatterns) {
+    const m = text.match(p);
+    if (m) {
+      const val = parseFloat(m[1].replace(/,/g, ''));
+      if (!isNaN(val) && val > 0) { amount = val; break; }
+    }
+  }
+  if (!amount) return null;
+
+  // 2. Credit vs Debit Classification
+  const isCredit = /credited|credit|received|salary|added|deposit|refund|cashback|interest|dividend|inward/i.test(text);
+  const isDebit = /debited|debit|paid|spent|purchase|withdrawn|payment|emi|transferred|sent|to\s+/i.test(text);
+
+  let type = 'expense';
+  if (isCredit && !isDebit) {
+    type = 'income';
+  } else if (/emi|loan repayment|housing loan|car loan|personal loan/i.test(text)) {
+    type = 'loan';
+  } else if (/mutual fund|sip|groww|zerodha|stocks|nse|bse|demat|indmoney|upstox/i.test(text)) {
+    type = 'investment';
+  } else if (/emergency fund|recurring deposit|fd|rd|fixed deposit/i.test(text)) {
+    type = 'savings';
+  }
+
+  // 3. Merchant / Description Extraction
+  let description = '';
+  const descPatterns = [
+    /(?:at|to|from|for|via|info:)\s+([A-Za-z0-9\s&'.-]{2,30}?)(?:\.|\s+on|\s+ref|\s+vpa|\s+a\/c|\s+bal|$)/i,
+    /UPI[\s\/-]+(?:to|from)?\s*([A-Za-z0-9\s]{2,25})/i,
+    /(?:VPA)\s+([A-Za-z0-9@._-]{3,30})/i
+  ];
+  for (const p of descPatterns) {
+    const m = text.match(p);
+    if (m && m[1]) {
+      const cleaned = m[1].replace(/^(a\/c|account|ref|txn|val|bal|bank)\b/i, '').trim();
+      if (cleaned.length >= 2) { description = cleaned; break; }
+    }
+  }
+
+  // 4. Date Extraction (DD-MM-YYYY, DD/MM/YY, DD Mon YYYY)
+  let date = todayStr();
+  const datePats = [
+    /(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/,
+    /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{0,4})/i
+  ];
+  for (const p of datePats) {
+    const m = text.match(p);
+    if (m) {
+      try {
+        const d = new Date(m[1]);
+        if (!isNaN(d.getTime())) date = d.toISOString().slice(0, 10);
+      } catch (e) {}
+      break;
+    }
+  }
+
+  // 5. Smart Category Matcher
+  let category = type === 'income' ? 'salary' : (type === 'loan' ? 'emi' : (type === 'investment' ? 'mutual_fund' : 'other_exp'));
+  const catKw = {
+    food: /zomato|swiggy|restaurant|cafe|food|dining|pizza|burger|blinkit|zepto|bigbasket|groceries|d-mart|dmart|instamart|starbucks/i,
+    transport: /uber|ola|petrol|fuel|cab|taxi|metro|toll|rapido|bpcl|hpcl|iocl|fastag/i,
+    shopping: /amazon|flipkart|myntra|mall|store|mart|meesho|nykaa|ajio|zara|tata cliq/i,
+    health: /pharmacy|medical|hospital|clinic|doctor|apollo|pharmeasy|1mg|lab|diagnostic/i,
+    utilities: /electricity|water|broadband|wifi|internet|bsnl|airtel|jio|bill|recharge|tata play|dth/i,
+    entertainment: /netflix|spotify|hotstar|movie|pvr|inox|bookmyshow|youtube|prime/i,
+    emi: /emi|loan repayment|home loan|car loan/i,
+    salary: /salary|wages|payroll|stipend/i,
+    mutual_fund: /mutual fund|sip|groww|zerodha|upstox|coin/i,
+    stocks: /nse|bse|stock|equity|share/i
+  };
+  for (const [cat, re] of Object.entries(catKw)) {
+    if (re.test(text)) { category = cat; break; }
+  }
+
+  return { amount, type, category, description, date };
 }
 
 function parseBulkSMS(text) {

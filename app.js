@@ -1519,16 +1519,41 @@ function parseBulkSMS(text) {
 
 // Native Android Background SMS Receiver Event Bridge
 window.addEventListener('native_sms_received', (e) => {
-  const { sender, text } = e.detail || {};
+  const detail = e.detail || {};
+  let sender = detail.sender || 'Bank';
+  let text = detail.text || '';
+  
+  if (detail.textB64) {
+    try {
+      text = decodeURIComponent(escape(atob(detail.textB64)));
+    } catch(err) {
+      text = atob(detail.textB64);
+    }
+  }
+  if (detail.senderB64) {
+    try {
+      sender = decodeURIComponent(escape(atob(detail.senderB64)));
+    } catch(err) {
+      sender = atob(detail.senderB64);
+    }
+  }
+
   if (!text) return;
   const parsed = parseSMS(text);
   if (parsed) {
+    const isDuplicate = STATE.transactions.some(t => 
+      t.amount === parsed.amount && 
+      t.date === parsed.date && 
+      t.description === parsed.description
+    );
+    if (isDuplicate) return;
+
     STATE.transactions.unshift({
       id: uid(),
       ...parsed,
       account: 'bank',
       recurring: false,
-      notes: `Auto-detected from SMS (${sender || 'Bank'})`,
+      notes: `Auto-detected from SMS (${sender})`,
       createdAt: new Date().toISOString()
     });
     saveData();

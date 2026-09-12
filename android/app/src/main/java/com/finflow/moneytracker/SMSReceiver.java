@@ -3,6 +3,7 @@ package com.finflow.moneytracker;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -11,6 +12,8 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class SMSReceiver extends BroadcastReceiver {
     private static final String TAG = "FinFlow_SMSReceiver";
@@ -38,9 +41,10 @@ public class SMSReceiver extends BroadcastReceiver {
                             Log.d(TAG, "SMS Received from: " + sender + " | Body: " + messageBody);
 
                             if (isFinancialSMS(messageBody)) {
-                                Log.i(TAG, "Financial SMS detected! Forwarding to FinFlow engine...");
-                                MainActivity.onSMSReceived(sender, messageBody);
+                                Log.i(TAG, "Financial SMS detected! Processing...");
+                                savePendingSMS(context, sender, messageBody);
                                 sendNotification(context, sender, messageBody);
+                                MainActivity.flushPendingSMS();
                             }
                         }
                     }
@@ -48,6 +52,22 @@ public class SMSReceiver extends BroadcastReceiver {
                     Log.e(TAG, "Error processing incoming SMS: " + e.getMessage(), e);
                 }
             }
+        }
+    }
+
+    private void savePendingSMS(Context context, String sender, String body) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+            String pendingJson = prefs.getString("pending_sms", "[]");
+            JSONArray arr = new JSONArray(pendingJson);
+            JSONObject obj = new JSONObject();
+            obj.put("sender", sender);
+            obj.put("body", body);
+            obj.put("time", System.currentTimeMillis());
+            arr.put(obj);
+            prefs.edit().putString("pending_sms", arr.toString()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving pending SMS to SharedPreferences: " + e.getMessage(), e);
         }
     }
 
@@ -78,11 +98,21 @@ public class SMSReceiver extends BroadcastReceiver {
     private boolean isFinancialSMS(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase();
-        return (lower.contains("debited") || lower.contains("credited") || lower.contains("spent") ||
-                lower.contains("paid") || lower.contains("received") || lower.contains("withdrawn") ||
-                lower.contains("a/c") || lower.contains("acct") || lower.contains("inr") ||
-                lower.contains("rs.") || lower.contains("₹") || lower.contains("upi") ||
-                lower.contains("emi") || lower.contains("salary")) &&
-               (lower.contains("rs") || lower.contains("inr") || lower.contains("₹") || lower.matches(".*\\d+.*"));
+        // Match ANY SMS that contains numbers/amounts and financial/bank/payment indicators
+        boolean hasNumbers = lower.matches(".*\\d+.*");
+        boolean hasFinancialKeywords = lower.contains("debited") || lower.contains("debit") || lower.contains("dr") ||
+                                       lower.contains("credited") || lower.contains("credit") || lower.contains("cr") ||
+                                       lower.contains("spent") || lower.contains("paid") || lower.contains("received") ||
+                                       lower.contains("sent") || lower.contains("transferred") || lower.contains("withdrawn") ||
+                                       lower.contains("payment") || lower.contains("a/c") || lower.contains("acct") ||
+                                       lower.contains("account") || lower.contains("inr") || lower.contains("rs") ||
+                                       lower.contains("₹") || lower.contains("upi") || lower.contains("vpa") ||
+                                       lower.contains("emi") || lower.contains("salary") || lower.contains("bank") ||
+                                       lower.contains("bal") || lower.contains("balance") || lower.contains("card") ||
+                                       lower.contains("hdfc") || lower.contains("sbi") || lower.contains("icici") ||
+                                       lower.contains("axis") || lower.contains("kotak") || lower.contains("paytm") ||
+                                       lower.contains("gpay") || lower.contains("phonepe") || lower.contains("amt") ||
+                                       lower.contains("amount");
+        return hasNumbers && hasFinancialKeywords;
     }
 }

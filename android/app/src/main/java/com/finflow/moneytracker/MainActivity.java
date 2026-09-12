@@ -3,13 +3,19 @@ package com.finflow.moneytracker;
 import android.Manifest;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Base64;
 import android.util.Log;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "FinFlow_MainActivity";
@@ -23,6 +29,13 @@ public class MainActivity extends BridgeActivity {
         instance = this;
         createNotificationChannel();
         requestPermissions();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        instance = this;
+        flushPendingSMS();
     }
 
     private void createNotificationChannel() {
@@ -70,14 +83,47 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    public static void flushPendingSMS() {
+        if (instance != null && instance.bridge != null) {
+            try {
+                SharedPreferences prefs = instance.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+                String pendingJson = prefs.getString("pending_sms", "[]");
+                if (!"[]".equals(pendingJson)) {
+                    JSONArray arr = new JSONArray(pendingJson);
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject obj = arr.getJSONObject(i);
+                        String sender = obj.optString("sender", "Bank");
+                        String body = obj.optString("body", "");
+                        dispatchSMSToWebView(sender, body);
+                    }
+                    prefs.edit().remove("pending_sms").apply();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error flushing pending SMS: " + e.getMessage(), e);
+            }
+        }
+    }
+
     public static void onSMSReceived(final String sender, final String messageBody) {
         if (instance != null && instance.bridge != null) {
+            dispatchSMSToWebView(sender, messageBody);
+        }
+    }
+
+    private static void dispatchSMSToWebView(final String sender, final String messageBody) {
+        if (instance != null && instance.bridge != null && messageBody != null) {
             instance.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    String escapedBody = messageBody.replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
-                    String js = "window.dispatchEvent(new CustomEvent('native_sms_received', { detail: { sender: '" + sender + "', text: '" + escapedBody + "' } }));";
-                    instance.bridge.getWebView().evaluateJavascript(js, null);
+                    try {
+                        String b64Body = Base64.encodeToString(messageBody.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                        String b64Sender = Base64.encodeToString((sender != null ? sender : "Bank").getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                        String js = "window.dispatchEvent(new CustomEvent('native_sms_received', { detail: { senderB64: '" + b64Sender + "', textB64: '" + b64Body + "' } }));";
+                        instance.bridge.getWebView().evaluateJavascript(js, null);
+                        Log.d(TAG, "SMS dispatched to WebView successfully.");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error evaluating JS for SMS: " + e.getMessage(), e);
+                    }
                 }
             });
         }

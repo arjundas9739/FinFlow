@@ -309,8 +309,8 @@ public class MainActivity extends BridgeActivity {
             }
 
             android.net.Uri inboxUri = android.net.Uri.parse("content://sms/inbox");
-            // Query SMS from last 48 hours
-            long cutoffTime = System.currentTimeMillis() - (48 * 60 * 60 * 1000L);
+            // Query SMS from last 15 minutes only (prevent flood of historical SMS on fresh install)
+            long cutoffTime = System.currentTimeMillis() - (15 * 60 * 1000L);
             String selection = "date > ?";
             String[] selectionArgs = new String[]{ String.valueOf(cutoffTime) };
             String sortOrder = "date DESC";
@@ -333,6 +333,8 @@ public class MainActivity extends BridgeActivity {
             JSONArray pendingArr = new JSONArray(pendingJson);
 
             while (cursor.moveToNext()) {
+                if (countNew >= 2) break; // Limit to max 2 missed SMS to avoid popup flooding
+
                 String id = cursor.getString(cursor.getColumnIndexOrThrow("_id"));
                 String address = cursor.getString(cursor.getColumnIndexOrThrow("address"));
                 String body = cursor.getString(cursor.getColumnIndexOrThrow("body"));
@@ -346,7 +348,7 @@ public class MainActivity extends BridgeActivity {
                 // Mark key as seen/processed
                 processedIds.add(smsKey);
 
-                if (body != null && body.matches(".*\\d+.*")) {
+                if (isBankOrFinancialSMS(body)) {
                     boolean isDuplicate = false;
                     for (int k = 0; k < pendingArr.length(); k++) {
                         JSONObject existingObj = pendingArr.optJSONObject(k);
@@ -356,7 +358,7 @@ public class MainActivity extends BridgeActivity {
                         }
                     }
                     if (isDuplicate) {
-                        dispatchDebugToWebView("[MainActivity] Inbox Sync: SMS body already queued -> skipping duplicate.");
+                        dispatchDebugToWebView("[MainActivity] Inbox Sync: Bank SMS already queued -> skipping.");
                         continue;
                     }
 
@@ -366,7 +368,7 @@ public class MainActivity extends BridgeActivity {
                     obj.put("time", date);
                     pendingArr.put(obj);
                     countNew++;
-                    dispatchDebugToWebView("[MainActivity] 📥 Inbox Sync caught SMS from " + address + ": " + (body.length() > 50 ? body.substring(0, 50) + "..." : body));
+                    dispatchDebugToWebView("[MainActivity] 📥 Inbox Sync caught missed Bank SMS from " + address + ": " + (body.length() > 50 ? body.substring(0, 50) + "..." : body));
                 }
             }
             cursor.close();
@@ -390,5 +392,16 @@ public class MainActivity extends BridgeActivity {
             Log.e(TAG, "Error in syncInboxSMS: " + e.getMessage(), e);
             dispatchDebugToWebView("[MainActivity] ERROR in syncInboxSMS: " + e.getMessage());
         }
+    }
+
+    private static boolean isBankOrFinancialSMS(String body) {
+        if (body == null || !body.matches(".*\\d+.*")) return false;
+        String lower = body.toLowerCase();
+        return lower.contains("spent") || lower.contains("debited") || lower.contains("credited") ||
+               lower.contains("paid") || lower.contains("transferred") || lower.contains("acct") ||
+               lower.contains("card") || lower.contains("inr") || lower.contains("rs.") || lower.contains("rs ") ||
+               lower.contains("upi") || lower.contains("hdfc") || lower.contains("sbi") || lower.contains("icici") ||
+               lower.contains("axis") || lower.contains("kotak") || lower.contains("paytm") || lower.contains("gpay") ||
+               lower.contains("phonepe") || lower.contains("bank") || lower.contains("vpa") || lower.contains("amazon in");
     }
 }

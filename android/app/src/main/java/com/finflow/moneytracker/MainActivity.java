@@ -32,6 +32,7 @@ public class MainActivity extends BridgeActivity {
         createNotificationChannel();
         requestPermissions();
         requestBatteryOptimizationExemption();
+        requestAutostartIfMIUI();
 
         dispatchDebugToWebView("[MainActivity] onCreate: App started. Scheduling pending SMS flush...");
 
@@ -115,6 +116,9 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         try {
+            // First scan Android SMS Inbox for any SMS received while app was closed
+            syncInboxSMS(instance);
+
             SharedPreferences prefs = instance.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
 
             // 1. Flush any saved background native debug logs first
@@ -264,6 +268,114 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {
                 Log.e(TAG, "Error requesting battery optimization exemption: " + e.getMessage());
             }
+        }
+    }
+
+    private void requestAutostartIfMIUI() {
+        try {
+            String manufacturer = android.os.Build.MANUFACTURER.toLowerCase();
+            if (manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco")) {
+                SharedPreferences prefs = getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+                boolean prompted = prefs.getBoolean("miui_autostart_prompted", false);
+                if (!prompted) {
+                    prefs.edit().putBoolean("miui_autostart_prompted", true).apply();
+                    android.content.Intent intent = new android.content.Intent();
+                    intent.setComponent(new android.content.ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+                    if (getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                        dispatchDebugToWebView("[MainActivity] Opening MIUI Autostart settings screen...");
+                        startActivity(intent);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Autostart settings intent failed: " + e.getMessage());
+        }
+    }
+
+    public static void syncInboxSMS(Context context) {
+        if (context == null) return;
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+            dispatchDebugToWebView("[MainActivity] syncInboxSMS: READ_SMS permission not granted.");
+            return;
+        }
+
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
+            String processedIdsJson = prefs.getString("processed_sms_ids", "[]");
+            JSONArray processedIdsArr = new JSONArray(processedIdsJson);
+            java.util.Set<String> processedIds = new java.util.HashSet<>();
+            for (int i = 0; i < processedIdsArr.length(); i++) {
+                processedIds.add(processedIdsArr.getString(i));
+            }
+
+            android.net.Uri inboxUri = android.net.Uri.parse("content://sms/inbox");
+            // Query SMS from last 48 hours
+            long cutoffTime = System.currentTimeMillis() - (48 * 60 * 60 * 1000L);
+            String selection = "date > ?";
+            String[] selectionArgs = new String[]{ String.valueOf(cutoffTime) };
+            String sortOrder = "date DESC";
+
+            android.database.Cursor cursor = context.getContentResolver().query(
+                inboxUri,
+                new String[]{"_id", "address", "body", "date"},
+                selection,
+                selectionArgs,
+                sortOrder
+            );
+
+            if (cursor == null) {
+                dispatchDebugToWebView("[MainActivity] syncInboxSMS: Inbox cursor is null.");
+                return;
+            }
+
+            int countNew = 0;
+            String pendingJson = prefs.getString("pending_sms", "[]");
+            JSONArray pendingArr = new JSONArray(pendingJson);
+
+            while (cursor.moveToNext()) {
+                String id = cursor.getString(cursor.getColumnIndexOrThrow("_id"));
+                String address = cursor.getString(cursor.getColumnIndexOrThrow("address"));
+                String body = cursor.getString(cursor.getColumnIndexOrThrow("body"));
+                long date = cursor.getLong(cursor.getColumnIndexOrThrow("date"));
+
+                String smsKey = id + "_" + date;
+                if (processedIds.contains(smsKey)) {
+                    continue;
+                }
+
+                // Mark key as seen/processed
+                processedIds.add(smsKey);
+
+                if (body != null && body.matches(".*\\d+.*")) {
+                    JSONObject obj = new JSONObject();
+                    obj.put("sender", address != null ? address : "Bank");
+                    obj.put("body", body);
+                    obj.put("time", date);
+                    pendingArr.put(obj);
+                    countNew++;
+                    dispatchDebugToWebView("[MainActivity] 📥 Inbox Sync caught SMS from " + address + ": " + (body.length() > 50 ? body.substring(0, 50) + "..." : body));
+                }
+            }
+            cursor.close();
+
+            // Save updated processed IDs (keep max 300)
+            JSONArray updatedProcessedArr = new JSONArray();
+            int limit = 0;
+            for (String key : processedIds) {
+                updatedProcessedArr.put(key);
+                limit++;
+                if (limit > 300) break;
+            }
+            prefs.edit().putString("processed_sms_ids", updatedProcessedArr.toString()).apply();
+
+            if (countNew > 0) {
+                prefs.edit().putString("pending_sms", pendingArr.toString()).apply();
+                dispatchDebugToWebView("[MainActivity] Inbox Sync queued " + countNew + " missed SMS(es).");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in syncInboxSMS: " + e.getMessage(), e);
+            dispatchDebugToWebView("[MainActivity] ERROR in syncInboxSMS: " + e.getMessage());
         }
     }
 }

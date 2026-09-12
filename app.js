@@ -1604,6 +1604,20 @@ window.addEventListener('native_sms_received', (e) => {
     if (parsed) {
       logDebug(`✅ Parsed: Amount ₹${parsed.amount} | Type: ${parsed.type} | Category: ${parsed.category} | Merchant: ${parsed.description || 'N/A'}`);
 
+      // 1. Check if already in pending queue
+      const inQueue = pendingSmsQueue.some(item => item.text === text || (item.parsed && item.parsed.amount === parsed.amount && item.parsed.description === parsed.description));
+      if (inQueue) {
+        logDebug('ℹ️ Duplicate SMS ignored (already in pending confirmation queue).');
+        return;
+      }
+
+      // 2. Check if currently being displayed on confirmation popup
+      if (window.currentSmsTxn && window.currentSmsTxn.text === text) {
+        logDebug('ℹ️ Duplicate SMS ignored (currently showing on screen popup).');
+        return;
+      }
+
+      // 3. Check if already saved in transaction list
       const isDuplicate = STATE.transactions.some(t =>
         t.amount === parsed.amount &&
         t.date === parsed.date &&

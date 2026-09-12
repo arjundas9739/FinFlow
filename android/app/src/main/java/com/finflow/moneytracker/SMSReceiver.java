@@ -120,9 +120,19 @@ public class SMSReceiver extends BroadcastReceiver {
             SharedPreferences prefs = context.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
             String pendingJson = prefs.getString("pending_sms", "[]");
             JSONArray arr = new JSONArray(pendingJson);
+
+            String safeBody = body != null ? body : "";
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject existingObj = arr.optJSONObject(i);
+                if (existingObj != null && safeBody.equals(existingObj.optString("body", ""))) {
+                    nativeLog(context, "Duplicate SMS body already in pending queue -> skipping.");
+                    return;
+                }
+            }
+
             JSONObject obj = new JSONObject();
             obj.put("sender", sender != null ? sender : "Bank");
-            obj.put("body", body != null ? body : "");
+            obj.put("body", safeBody);
             obj.put("time", System.currentTimeMillis());
             arr.put(obj);
             prefs.edit().putString("pending_sms", arr.toString()).apply();

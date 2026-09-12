@@ -347,6 +347,19 @@ public class MainActivity extends BridgeActivity {
                 processedIds.add(smsKey);
 
                 if (body != null && body.matches(".*\\d+.*")) {
+                    boolean isDuplicate = false;
+                    for (int k = 0; k < pendingArr.length(); k++) {
+                        JSONObject existingObj = pendingArr.optJSONObject(k);
+                        if (existingObj != null && body.equals(existingObj.optString("body", ""))) {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+                    if (isDuplicate) {
+                        dispatchDebugToWebView("[MainActivity] Inbox Sync: SMS body already queued -> skipping duplicate.");
+                        continue;
+                    }
+
                     JSONObject obj = new JSONObject();
                     obj.put("sender", address != null ? address : "Bank");
                     obj.put("body", body);

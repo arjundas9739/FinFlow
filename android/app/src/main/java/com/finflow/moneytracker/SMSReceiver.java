@@ -1,5 +1,6 @@
 package com.finflow.moneytracker;
 
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -128,6 +129,18 @@ public class SMSReceiver extends BroadcastReceiver {
                 return;
             }
 
+            // Ensure channel exists (critical when app is fully killed)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null && nm.getNotificationChannel("finflow_alerts") == null) {
+                    android.app.NotificationChannel channel = new android.app.NotificationChannel(
+                        "finflow_alerts", "FinFlow Bank Alerts", NotificationManager.IMPORTANCE_HIGH);
+                    channel.setDescription("Auto-detected bank SMS transactions");
+                    nm.createNotificationChannel(channel);
+                    Log.d(TAG, "Notification channel created by SMSReceiver.");
+                }
+            }
+
             Intent openIntent = new Intent(context, MainActivity.class);
             openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
@@ -138,10 +151,10 @@ public class SMSReceiver extends BroadcastReceiver {
 
             PendingIntent pendingIntent = PendingIntent.getActivity(context, (int) System.currentTimeMillis(), openIntent, flags);
 
-            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, MainActivity.CHANNEL_ID)
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, "finflow_alerts")
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("⚡ FinFlow: Bank SMS Detected")
-                    .setContentText("Tap to review transaction from " + (sender != null ? sender : "Bank"))
+                    .setContentText("Tap to review: " + (sender != null ? sender : "Bank"))
                     .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setContentIntent(pendingIntent)

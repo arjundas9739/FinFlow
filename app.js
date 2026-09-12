@@ -1624,6 +1624,8 @@ function showNextSmsConfirmation() {
   const current = pendingSmsQueue[0];
   const { sender, text, parsed } = current;
 
+  logDebug(`📋 Showing SMS Confirm Popup — ₹${parsed.amount} | ${parsed.type} | ${parsed.category}`);
+
   const isCredit = parsed.type === 'income';
   const badge = document.getElementById('smsConfirmTypeBadge');
   if (badge) {
@@ -1657,8 +1659,21 @@ function showNextSmsConfirmation() {
     });
   }
 
+  // Re-wire buttons every time the modal is shown (prevents stale handlers)
+  const addBtn = document.getElementById('smsConfirmAddBtn');
+  if (addBtn) addBtn.onclick = confirmSmsTransaction;
+  const cancelBtn = document.getElementById('smsConfirmCancelBtn');
+  if (cancelBtn) cancelBtn.onclick = ignoreSmsTransaction;
+  const closeBtn = document.getElementById('smsConfirmClose');
+  if (closeBtn) closeBtn.onclick = ignoreSmsTransaction;
+
   const modal = document.getElementById('smsConfirmModal');
-  if (modal) modal.classList.remove('hidden');
+  if (modal) {
+    modal.classList.remove('hidden');
+    logDebug('✅ SMS Confirm popup is now visible. Tap "Confirm & Add" to save.');
+  } else {
+    logDebug('❌ ERROR: smsConfirmModal element not found in DOM!');
+  }
 }
 
 function confirmSmsTransaction() {
@@ -1685,9 +1700,10 @@ function confirmSmsTransaction() {
   });
 
   saveData();
+  logDebug(`💾 Transaction SAVED: ₹${amount} | ${current.parsed.type} | ${category} | ${date}`);
   const modal = document.getElementById('smsConfirmModal');
   if (modal) modal.classList.add('hidden');
-  showToast(`Logged ${current.parsed.type === 'income' ? 'Credit' : 'Debit'}: ${fmt(amount)}`, '📱');
+  showToast(`✅ ${current.parsed.type === 'income' ? 'Credit' : 'Debit'} Logged: ${fmt(amount)}`, '💰');
   renderPage();
   haptic([10, 5, 10]);
 
@@ -2044,9 +2060,15 @@ function init() {
   document.getElementById('pinModalClose').onclick=()=>document.getElementById('pinModal').classList.add('hidden');
   document.getElementById('pinModal').onclick=e=>{ if(e.target===document.getElementById('pinModal')) document.getElementById('pinModal').classList.add('hidden'); };
   
-  // SMS Confirmation Modal
+  // SMS Confirmation Modal — wire all three buttons
+  const confirmAddBtn = document.getElementById('smsConfirmAddBtn');
+  if (confirmAddBtn) confirmAddBtn.onclick = confirmSmsTransaction;
+  const confirmCancelBtn = document.getElementById('smsConfirmCancelBtn');
+  if (confirmCancelBtn) confirmCancelBtn.onclick = ignoreSmsTransaction;
   const confirmClose = document.getElementById('smsConfirmClose');
   if (confirmClose) confirmClose.onclick = ignoreSmsTransaction;
+  const smsConfirmOverlay = document.getElementById('smsConfirmModal');
+  if (smsConfirmOverlay) smsConfirmOverlay.onclick = e => { if (e.target === smsConfirmOverlay) ignoreSmsTransaction(); };
   // SMS Debugger Modal
   const debugBtn = document.getElementById('debugBtn');
   if (debugBtn) debugBtn.onclick = openDebugModal;

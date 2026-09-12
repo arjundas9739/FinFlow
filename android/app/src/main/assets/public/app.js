@@ -1923,10 +1923,19 @@ function seedDemoData() {
 // ══════════════════════════════════════
 // APP SHOW
 // ══════════════════════════════════════
+function signalAppReady() {
+  if (window.FinFlowNative && typeof window.FinFlowNative.notifyAppReady === 'function') {
+    try {
+      window.FinFlowNative.notifyAppReady();
+    } catch(e) { console.error('Signal ready error', e); }
+  }
+}
+
 function showApp() {
   applyTheme(STATE.theme);
   document.getElementById('app').classList.remove('hidden');
   renderPage();
+  signalAppReady();
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 

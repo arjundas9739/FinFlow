@@ -1534,8 +1534,50 @@ function parseBulkSMS(text) {
   return results;
 }
 
-// Interactive SMS Confirmation Modal Queue
-let pendingSmsQueue = [];
+// ══════════════════════════════════════
+// DEBUG LOGGER
+// ══════════════════════════════════════
+let debugLogsList = [];
+
+function logDebug(msg) {
+  const time = new Date().toLocaleTimeString('en-IN', { hour12: false });
+  const entry = `[${time}] ${msg}`;
+  debugLogsList.push(entry);
+  if (debugLogsList.length > 50) debugLogsList.shift();
+  try {
+    localStorage.setItem('ff_debug_logs', JSON.stringify(debugLogsList));
+  } catch(e) {}
+  updateDebugLogsUI();
+}
+
+function updateDebugLogsUI() {
+  const container = document.getElementById('debugLogsContainer');
+  if (container) {
+    if (debugLogsList.length === 0) {
+      container.textContent = 'No SMS events logged yet.\n\nSend a test SMS to your phone to see live logs here!';
+    } else {
+      container.textContent = debugLogsList.join('\n\n');
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+}
+
+function openDebugModal() {
+  try {
+    const saved = localStorage.getItem('ff_debug_logs');
+    if (saved) debugLogsList = JSON.parse(saved);
+  } catch(e) {}
+  updateDebugLogsUI();
+  document.getElementById('debugModal').classList.remove('hidden');
+}
+function closeDebugModal() {
+  document.getElementById('debugModal').classList.add('hidden');
+}
+
+window.addEventListener('native_sms_debug', (e) => {
+  const log = e.detail?.log;
+  if (log) logDebug(`[Android Native] ${log}`);
+});
 
 window.addEventListener('native_sms_received', (e) => {
   const detail = e.detail || {};
@@ -1549,19 +1591,31 @@ window.addEventListener('native_sms_received', (e) => {
     try { sender = decodeURIComponent(escape(atob(detail.senderB64))); } catch(err) { sender = atob(detail.senderB64); }
   }
 
-  if (!text) return;
+  logDebug(`📱 SMS Received from: "${sender}"\nText: "${text}"`);
+
+  if (!text) {
+    logDebug('⚠️ Empty SMS text received.');
+    return;
+  }
+
   const parsed = parseSMS(text);
   if (parsed) {
+    logDebug(`✅ Parsed: Amount ₹${parsed.amount} | Type: ${parsed.type} | Category: ${parsed.category} | Merchant: ${parsed.description || 'N/A'}`);
     const isDuplicate = STATE.transactions.some(t => 
       t.amount === parsed.amount && 
       t.date === parsed.date && 
       t.description === parsed.description
     );
-    if (isDuplicate) return;
+    if (isDuplicate) {
+      logDebug('ℹ️ Duplicate transaction ignored.');
+      return;
+    }
 
     showToast(`⚡ Bank SMS Received: ${fmt(parsed.amount)}`, '📱');
     pendingSmsQueue.push({ sender, text, parsed });
     showNextSmsConfirmation();
+  } else {
+    logDebug('❌ parseSMS returned null (SMS was not recognized as financial transaction).');
   }
 });
 
@@ -1993,10 +2047,35 @@ function init() {
   // SMS Confirmation Modal
   const confirmClose = document.getElementById('smsConfirmClose');
   if (confirmClose) confirmClose.onclick = ignoreSmsTransaction;
-  const confirmAdd = document.getElementById('smsConfirmAddBtn');
-  if (confirmAdd) confirmAdd.onclick = confirmSmsTransaction;
-  const confirmCancel = document.getElementById('smsConfirmCancelBtn');
-  if (confirmCancel) confirmCancel.onclick = ignoreSmsTransaction;
+  // SMS Debugger Modal
+  const debugBtn = document.getElementById('debugBtn');
+  if (debugBtn) debugBtn.onclick = openDebugModal;
+  const debugClose = document.getElementById('debugModalClose');
+  if (debugClose) debugClose.onclick = closeDebugModal;
+  const copyDebugBtn = document.getElementById('copyDebugLogsBtn');
+  if (copyDebugBtn) copyDebugBtn.onclick = () => {
+    const text = debugLogsList.join('\n\n') || 'No logs available.';
+    navigator.clipboard.writeText(text).then(() => showToast('Logs copied to clipboard!', '📋')).catch(() => showToast('Failed to copy', '⚠️'));
+  };
+  const clearDebugBtn = document.getElementById('clearDebugLogsBtn');
+  if (clearDebugBtn) clearDebugBtn.onclick = () => {
+    debugLogsList = [];
+    localStorage.removeItem('ff_debug_logs');
+    updateDebugLogsUI();
+    showToast('Logs cleared', '🗑️');
+  };
+  const testParserBtn = document.getElementById('testParserBtn');
+  if (testParserBtn) testParserBtn.onclick = () => {
+    const sample = "UPDATE: INR 8,000.00 debited from HDFC Bank XX4150 on 12-SEP-26. Info: ACH D- Indian Clearing Corp-0000SF9M5ITY. Avl bal:INR 49,477.51";
+    logDebug(`🧪 Manual Test Triggered on Sample SMS:\n"${sample}"`);
+    const parsed = parseSMS(sample);
+    if (parsed) {
+      logDebug(`✅ Test Parse Result: Amount ₹${parsed.amount} | Type: ${parsed.type} | Category: ${parsed.category} | Merchant: ${parsed.description}`);
+      pendingSmsQueue.push({ sender: 'HDFC-Bank', text: sample, parsed });
+      closeDebugModal();
+      showNextSmsConfirmation();
+    }
+  };
 
   // Type tabs
   document.querySelectorAll('.type-tab').forEach(b=>b.onclick=()=>{ setActiveTypeTab(b.dataset.type); populateCategorySelect(b.dataset.type); });

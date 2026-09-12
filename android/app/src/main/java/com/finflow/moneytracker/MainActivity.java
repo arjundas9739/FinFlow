@@ -8,10 +8,10 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
-import android.webkit.JavascriptInterface;
-import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
@@ -24,52 +24,40 @@ public class MainActivity extends BridgeActivity {
     private static final int SMS_PERMISSION_CODE = 101;
     public static final String CHANNEL_ID = "finflow_alerts";
     private static MainActivity instance;
-    private static boolean isJsReady = false;
-
-    public class SMSBridge {
-        @JavascriptInterface
-        public void notifyAppReady() {
-            Log.d(TAG, "JS App Ready signal received from WebView!");
-            isJsReady = true;
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    flushPendingSMS();
-                }
-            });
-        }
-    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
-        isJsReady = false;
         createNotificationChannel();
         requestPermissions();
-        setupJavascriptBridge();
-    }
 
-    private void setupJavascriptBridge() {
-        try {
-            WebView webView = getBridge().getWebView();
-            if (webView != null) {
-                webView.addJavascriptInterface(new SMSBridge(), "FinFlowNative");
-                Log.d(TAG, "JavascriptInterface FinFlowNative registered successfully.");
+        // Delay flush pending SMS on cold start to ensure WebView & app.js finished loading
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                flushPendingSMS();
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error setting up JavascriptInterface: " + e.getMessage(), e);
-        }
+        }, 1500);
+
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                flushPendingSMS();
+            }
+        }, 3500);
     }
 
     @Override
     public void onResume() {
         super.onResume();
         instance = this;
-        setupJavascriptBridge();
-        if (isJsReady) {
-            flushPendingSMS();
-        }
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                flushPendingSMS();
+            }
+        }, 1000);
     }
 
     private void createNotificationChannel() {
@@ -118,12 +106,13 @@ public class MainActivity extends BridgeActivity {
     }
 
     public static void flushPendingSMS() {
-        if (instance != null && instance.getBridge() != null && instance.getBridge().getWebView() != null) {
+        if (instance != null) {
             try {
                 SharedPreferences prefs = instance.getSharedPreferences("finflow_prefs", Context.MODE_PRIVATE);
                 String pendingJson = prefs.getString("pending_sms", "[]");
                 if (!"[]".equals(pendingJson)) {
                     JSONArray arr = new JSONArray(pendingJson);
+                    Log.d(TAG, "Flushing " + arr.length() + " pending SMS messages to WebView.");
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject obj = arr.getJSONObject(i);
                         String sender = obj.optString("sender", "Bank");
@@ -131,7 +120,6 @@ public class MainActivity extends BridgeActivity {
                         dispatchSMSToWebView(sender, body);
                     }
                     prefs.edit().remove("pending_sms").apply();
-                    Log.d(TAG, "Flushed " + arr.length() + " pending SMS messages to WebView.");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error flushing pending SMS: " + e.getMessage(), e);
@@ -140,22 +128,26 @@ public class MainActivity extends BridgeActivity {
     }
 
     public static void onSMSReceived(final String sender, final String messageBody) {
-        if (instance != null && isJsReady) {
+        if (instance != null) {
             dispatchSMSToWebView(sender, messageBody);
         }
     }
 
-    private static void dispatchSMSToWebView(final String sender, final String messageBody) {
-        if (instance != null && instance.getBridge() != null && instance.getBridge().getWebView() != null && messageBody != null) {
+    public static void dispatchSMSToWebView(final String sender, final String messageBody) {
+        if (instance != null && messageBody != null) {
             instance.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        String b64Body = Base64.encodeToString(messageBody.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
-                        String b64Sender = Base64.encodeToString((sender != null ? sender : "Bank").getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
-                        String js = "window.dispatchEvent(new CustomEvent('native_sms_received', { detail: { senderB64: '" + b64Sender + "', textB64: '" + b64Body + "' } }));";
-                        instance.getBridge().getWebView().evaluateJavascript(js, null);
-                        Log.d(TAG, "SMS dispatched to WebView successfully.");
+                        if (instance.getBridge() != null && instance.getBridge().getWebView() != null) {
+                            String b64Body = Base64.encodeToString(messageBody.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                            String b64Sender = Base64.encodeToString((sender != null ? sender : "Bank").getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                            String js = "window.dispatchEvent(new CustomEvent('native_sms_received', { detail: { senderB64: '" + b64Sender + "', textB64: '" + b64Body + "' } }));";
+                            instance.getBridge().getWebView().evaluateJavascript(js, null);
+                            Log.d(TAG, "SMS dispatched to WebView successfully.");
+                        } else {
+                            Log.w(TAG, "Bridge or WebView not available yet.");
+                        }
                     } catch (Exception e) {
                         Log.e(TAG, "Error evaluating JS for SMS: " + e.getMessage(), e);
                     }

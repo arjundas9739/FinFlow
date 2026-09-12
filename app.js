@@ -1559,6 +1559,7 @@ window.addEventListener('native_sms_received', (e) => {
     );
     if (isDuplicate) return;
 
+    showToast(`⚡ Bank SMS Received: ${fmt(parsed.amount)}`, '📱');
     pendingSmsQueue.push({ sender, text, parsed });
     showNextSmsConfirmation();
   }

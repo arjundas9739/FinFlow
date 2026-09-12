@@ -2162,19 +2162,36 @@ function importJSON() {
   };
   inp.click();
 }
-function downloadBlob(content,type,name) {
+function downloadBlob(content, type, name) {
+  logDebug(`[Download] Initiating export for "${name}" (${content ? content.length : 0} bytes)...`);
   if (window.FinFlowNativeFile && typeof window.FinFlowNativeFile.saveToDownloads === 'function') {
     try {
       window.FinFlowNativeFile.saveToDownloads(name, content, type);
+      logDebug(`[Download] Triggered Native saveToDownloads for "${name}". Check your Downloads folder!`);
+      showToast(`Exported to Downloads!`, '📤');
       return;
     } catch(e) {
-      console.error("Native download failed, falling back to Blob URL", e);
+      logDebug(`[Download] Native saveToDownloads failed: ${e.message}`);
     }
+  } else {
+    logDebug('[Download] window.FinFlowNativeFile not bound yet. Using Data URI fallback...');
   }
-  const blob=new Blob([content],{type});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=name; a.click();
-  URL.revokeObjectURL(url);
+
+  try {
+    const encoded = encodeURIComponent(content);
+    const dataUrl = `data:${type};charset=utf-8,${encoded}`;
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    logDebug(`[Download] Data URL export triggered for "${name}".`);
+    showToast(`Exported ${name}!`, '📤');
+  } catch(e) {
+    logDebug(`[Download] Export failed: ${e.message}`);
+    showToast('Export failed', '❌');
+  }
 }
 function resetAllData() {
   if(!confirm('⚠️ This will permanently delete ALL your data. Are you sure?')) return;

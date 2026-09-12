@@ -485,6 +485,7 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void saveToDownloads(final String fileName, final String content, final String mimeType) {
             try {
+                Log.d(TAG, "saveToDownloads called for: " + fileName + " (length: " + (content != null ? content.length() : 0) + ")");
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     ContentValues values = new ContentValues();
                     values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
@@ -494,8 +495,11 @@ public class MainActivity extends BridgeActivity {
                     Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
                     if (uri != null) {
                         OutputStream out = context.getContentResolver().openOutputStream(uri);
-                        out.write(content.getBytes(StandardCharsets.UTF_8));
-                        out.close();
+                        if (out != null) {
+                            out.write(content.getBytes(StandardCharsets.UTF_8));
+                            out.flush();
+                            out.close();
+                        }
                         showToastOnMain("Saved to Download: " + fileName);
                         dispatchDebugToWebView("[NativeFile] File saved to Downloads: " + fileName);
                         return;
@@ -508,6 +512,7 @@ public class MainActivity extends BridgeActivity {
                 File targetFile = new File(downloadDir, fileName);
                 FileOutputStream fos = new FileOutputStream(targetFile);
                 fos.write(content.getBytes(StandardCharsets.UTF_8));
+                fos.flush();
                 fos.close();
                 showToastOnMain("Saved to Download: " + fileName);
                 dispatchDebugToWebView("[NativeFile] File saved to Download dir: " + targetFile.getAbsolutePath());

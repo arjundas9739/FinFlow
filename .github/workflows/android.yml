@@ -28,8 +28,8 @@ jobs:
 
       - name: Install Dependencies & Sync Capacitor
         run: |
-          npm install --legacy-peer-deps
-          npx @capacitor/cli sync android
+          npm install
+          ./node_modules/.bin/cap sync android
 
       - name: Grant Execute Permission for Gradlew
         run: |

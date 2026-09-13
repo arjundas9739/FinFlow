@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <link rel="stylesheet" href="style.css" />
   <script>
     if ('serviceWorker' in navigator) {
@@ -431,6 +432,44 @@ Rs.75000 credited to A/c XX1234 on 01-Sep-26 by Salary."></textarea>
         <button class="modal-close" id="breakdownClose">✕</button>
       </div>
       <div class="modal-body" id="breakdownBody"></div>
+    </div>
+  </div>
+
+  <!-- ══ BANK STATEMENT IMPORT MODAL ══ -->
+  <div id="statementImportModal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-height:92dvh">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>📊 Import Bank Statement</h2>
+        <button class="modal-close" id="statementImportClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="help-text">Select your bank statement Excel (<code>.xls</code>, <code>.xlsx</code>) or <code>.csv</code> file. FinFlow automatically parses transactions, categorizes vendors, and suppresses duplicates.</p>
+        
+        <!-- Dropzone / Picker -->
+        <div class="form-group">
+          <div class="file-drop-zone" id="statementDropZone">
+            <div style="font-size:2.5rem;margin-bottom:8px">📄</div>
+            <div style="font-weight:700;font-size:0.92rem">Tap to Select Statement File</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">Supports HDFC, SBI, ICICI, Axis (.xls, .xlsx, .csv)</div>
+            <input type="file" id="statementFileInput" accept=".xls,.xlsx,.csv,.txt" style="display:none" />
+          </div>
+        </div>
+
+        <!-- Preview Area (hidden initially) -->
+        <div id="statementPreviewArea" class="hidden">
+          <div id="statementSummaryBanner" style="background:var(--bg-card2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:14px"></div>
+          
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase">Parsed Transactions</span>
+            <button id="toggleSelectAllBtn" style="font-size:0.75rem;color:var(--accent);font-weight:700">Deselect All</button>
+          </div>
+
+          <div id="statementTxnList" style="max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
+
+          <button class="btn-primary" id="confirmStatementImportBtn">🚀 Import Selected Transactions</button>
+        </div>
+      </div>
     </div>
   </div>
 

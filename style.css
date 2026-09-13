@@ -970,4 +970,32 @@ input[type="checkbox"] { width: auto; margin-right: 6px; accent-color: var(--acc
   border-color: var(--accent) !important;
 }
 
+/* File Drop Zone & Statement Preview */
+.file-drop-zone {
+  border: 2px dashed var(--accent);
+  background: rgba(var(--accent-rgb),0.05);
+  border-radius: var(--radius-md);
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.file-drop-zone:hover, .file-drop-zone.dragover {
+  background: rgba(var(--accent-rgb),0.12);
+  border-color: var(--accent2);
+}
+.statement-txn-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.statement-txn-card.is-dup {
+  opacity: 0.65;
+  border-color: var(--border);
+}
+
 

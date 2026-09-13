@@ -1389,6 +1389,7 @@ function renderSettings() {
 
   // ── Data
   const dataSection=[
+    { icon:'📊', bg:'rgba(6,214,160,0.12)', label:'Import Bank Statement (.xls/.csv)', sub:'Auto-import HDFC, SBI, ICICI statements', right:'›', fn:()=>openStatementImportModal() },
     { icon:'📤', bg:'rgba(108,99,255,0.12)', label:'Export CSV', sub:'Export this month\'s transactions', right:'›', fn:()=>exportCSV() },
     { icon:'📥', bg:'rgba(6,214,160,0.12)', label:'Export JSON', sub:'Full data backup', right:'›', fn:()=>exportJSON() },
     { icon:'📂', bg:'rgba(255,209,102,0.12)', label:'Import JSON', sub:'Restore from backup', right:'›', fn:()=>importJSON() },
@@ -2607,6 +2608,358 @@ function init() {
   if(sBtn) sBtn.onclick=()=>navigate('settings');
   const tAvatar = document.getElementById('topbarAvatar');
   if(tAvatar) { tAvatar.style.cursor='pointer'; tAvatar.onclick=()=>navigate('settings'); }
+}
+
+// ══════════════════════════════════════
+// BANK STATEMENT IMPORTER ENGINE (.XLS / .XLSX / .CSV)
+// ══════════════════════════════════════
+let parsedStatementTxns = [];
+
+function openStatementImportModal() {
+  const modal = document.getElementById('statementImportModal');
+  const fileInput = document.getElementById('statementFileInput');
+  const dropZone = document.getElementById('statementDropZone');
+  const previewArea = document.getElementById('statementPreviewArea');
+
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  previewArea.classList.add('hidden');
+  dropZone.style.display = 'block';
+
+  // Wire file picker
+  dropZone.onclick = () => fileInput.click();
+  fileInput.onchange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleStatementFile(e.target.files[0]);
+    }
+  };
+
+  // Drag & drop
+  dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+  dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+  dropZone.ondrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleStatementFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const closeBtn = document.getElementById('statementImportClose');
+  if (closeBtn) closeBtn.onclick = closeStatementImportModal;
+  modal.onclick = (e) => { if (e.target === modal) closeStatementImportModal(); };
+}
+
+function closeStatementImportModal() {
+  const modal = document.getElementById('statementImportModal');
+  if (modal) modal.classList.add('hidden');
+  parsedStatementTxns = [];
+}
+
+function handleStatementFile(file) {
+  if (typeof XLSX === 'undefined') {
+    showToast('XLSX parser library loading, try again in a moment...', '⏳');
+    return;
+  }
+
+  showToast(`Parsing ${file.name}...`, '⏳');
+  const reader = new FileReader();
+
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' });
+
+      parsedStatementTxns = extractTxnsFromSheetRows(jsonRows);
+
+      if (parsedStatementTxns.length === 0) {
+        showToast('No transaction rows detected in statement', '⚠️');
+        return;
+      }
+
+      renderStatementPreview(file.name);
+    } catch (err) {
+      console.error('File parse error:', err);
+      showToast('Error reading file: ' + err.message, '❌');
+    }
+  };
+
+  reader.readAsArrayBuffer(file);
+}
+
+function extractTxnsFromSheetRows(rows) {
+  if (!rows || rows.length === 0) return [];
+
+  // Find Header Row index
+  let headerRowIdx = -1;
+  let colMap = { date: -1, narration: -1, refNo: -1, withdrawal: -1, deposit: -1, balance: -1 };
+
+  for (let r = 0; r < Math.min(rows.length, 50); r++) {
+    const row = rows[r].map(c => String(c).trim().toLowerCase());
+
+    const hasDate = row.some(c => c.includes('date'));
+    const hasNarration = row.some(c => c.includes('narration') || c.includes('description') || c.includes('particulars'));
+    const hasAmt = row.some(c => c.includes('withdrawal') || c.includes('deposit') || c.includes('debit') || c.includes('credit') || c.includes('amount'));
+
+    if (hasDate && (hasNarration || hasAmt)) {
+      headerRowIdx = r;
+      row.forEach((cell, colIdx) => {
+        if (cell.includes('date') && !cell.includes('value')) colMap.date = colIdx;
+        else if (cell.includes('narration') || cell.includes('description') || cell.includes('particulars')) colMap.narration = colIdx;
+        else if (cell.includes('ref') || cell.includes('chq')) colMap.refNo = colIdx;
+        else if (cell.includes('withdrawal') || cell.includes('debit')) colMap.withdrawal = colIdx;
+        else if (cell.includes('deposit') || cell.includes('credit')) colMap.deposit = colIdx;
+        else if (cell.includes('balance')) colMap.balance = colIdx;
+      });
+      break;
+    }
+  }
+
+  // Fallback defaults if header row matching failed or HDFC default layout
+  if (headerRowIdx === -1 || colMap.date === -1) {
+    for (let r = 0; r < rows.length; r++) {
+      const firstCell = String(rows[r][0] || '').trim();
+      if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(firstCell)) {
+        headerRowIdx = r - 1;
+        colMap = { date: 0, narration: 1, refNo: 2, withdrawal: 4, deposit: 5, balance: 6 };
+        break;
+      }
+    }
+  }
+
+  if (headerRowIdx === -1) return [];
+
+  const txns = [];
+
+  for (let r = headerRowIdx + 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.length === 0) continue;
+
+    const dateStr = String(row[colMap.date] || '').trim();
+    const lowerDate = dateStr.toLowerCase();
+
+    // Stop parsing when reaching statement summary footer
+    if (lowerDate.includes('statement summary') || lowerDate.includes('opening balance') || lowerDate.includes('end of statement') || lowerDate.includes('generated')) {
+      break;
+    }
+
+    if (!dateStr || dateStr.startsWith('*') || lowerDate.includes('date')) continue;
+
+    const isoDate = normalizeStatementDate(dateStr);
+    if (!isoDate) continue;
+
+    const rawNarration = String(row[colMap.narration] || '').trim();
+    const refNo = colMap.refNo >= 0 ? String(row[colMap.refNo] || '').trim() : '';
+
+    const wStr = colMap.withdrawal >= 0 ? String(row[colMap.withdrawal] || '').replace(/,/g, '').trim() : '';
+    const dStr = colMap.deposit >= 0 ? String(row[colMap.deposit] || '').replace(/,/g, '').trim() : '';
+
+    const withdrawalAmt = parseFloat(wStr) || 0;
+    const depositAmt = parseFloat(dStr) || 0;
+
+    if (withdrawalAmt === 0 && depositAmt === 0) continue;
+
+    const isIncome = depositAmt > 0;
+    const amount = isIncome ? depositAmt : withdrawalAmt;
+
+    const classified = classifyStatementMerchant(rawNarration, isIncome);
+
+    // De-duplication check against existing transactions
+    const isDup = STATE.transactions.some(t => {
+      return t.date === isoDate && Math.abs(t.amount - amount) < 0.01 && (
+        (t.type === classified.type) ||
+        (t.notes && refNo && t.notes.includes(refNo))
+      );
+    });
+
+    txns.push({
+      id: uid(),
+      date: isoDate,
+      amount,
+      type: classified.type,
+      category: classified.category,
+      description: classified.description,
+      account: 'bank',
+      notes: `Ref: ${refNo || 'N/A'} | Raw: ${rawNarration.slice(0, 100)}`,
+      selected: !isDup,
+      isDup,
+    });
+  }
+
+  return txns;
+}
+
+function normalizeStatementDate(str) {
+  if (!str) return null;
+  const clean = str.replace(/[^\d\/\-\.]/g, '');
+  const parts = clean.split(/[\/\-\.]/);
+  if (parts.length !== 3) return null;
+
+  let day, month, year;
+
+  if (parts[0].length === 4) {
+    year = parts[0]; month = parts[1]; day = parts[2];
+  } else {
+    day = parts[0].padStart(2, '0');
+    month = parts[1].padStart(2, '0');
+    year = parts[2];
+    if (year.length === 2) year = '20' + year;
+  }
+
+  if (+month < 1 || +month > 12 || +day < 1 || +day > 31) return null;
+  return `${year}-${month}-${day}`;
+}
+
+function classifyStatementMerchant(raw, isIncome) {
+  const text = raw.toUpperCase();
+
+  let cleanName = raw;
+  if (text.includes('UPI-')) {
+    const parts = raw.split('-');
+    if (parts.length >= 2) {
+      cleanName = parts[1].trim();
+      if (cleanName.includes('@')) cleanName = cleanName.split('@')[0];
+    }
+  } else if (text.includes('NEFT CR-')) {
+    const parts = raw.split('-');
+    if (parts.length >= 3) cleanName = parts[2].trim();
+  } else if (text.includes('ACH D-') || text.includes('ACH C-')) {
+    const parts = raw.split('-');
+    if (parts.length >= 2) cleanName = parts[1].trim();
+  }
+
+  cleanName = cleanName.replace(/PAYMENT FROM PHONE|PAID VIA CRED|UPIINTENT|NO REMARKS|PAY TO BHARATPE ME/g, '').trim();
+
+  let type = isIncome ? 'income' : 'expense';
+  let category = isIncome ? 'salary' : 'other_exp';
+
+  if (isIncome) {
+    if (text.includes('ACTEVIA') || text.includes('SALARY')) category = 'salary';
+    else if (text.includes('DIVIDEND') || text.includes('TRIDENT')) category = 'dividend';
+    else if (text.includes('INTEREST')) category = 'interest';
+    else category = 'other_income';
+  } else {
+    if (text.includes('ZEPTO') || text.includes('BLINKIT') || text.includes('BIGBASKET') || text.includes('SWIGGY') || text.includes('ZOMATO') || text.includes('FOOD') || text.includes('DREAM')) {
+      type = 'expense'; category = 'food';
+    } else if (text.includes('METRO') || text.includes('BMTC') || text.includes('BUS') || text.includes('PETROL') || text.includes('FUEL') || text.includes('UBER') || text.includes('OLA')) {
+      type = 'expense'; category = 'transport';
+    } else if (text.includes('AMAZON') || text.includes('FLIPKART') || text.includes('MYNTRA') || text.includes('CRED') || text.includes('FRAME') || text.includes('SPEC')) {
+      type = 'expense'; category = 'shopping';
+    } else if (text.includes('EMI') || text.includes('LOAN') || text.includes('ICICI BANK-222') || text.includes('CARD 4066')) {
+      type = 'loan'; category = 'emi';
+    } else if (text.includes('ZERODHA') || text.includes('GROWW') || text.includes('MUTUAL') || text.includes('SIP') || text.includes('STOCKS')) {
+      type = 'investment'; category = 'mutual_fund';
+    } else if (text.includes('SSY') || text.includes('SUKANYA') || text.includes('PPF') || text.includes('SAVING')) {
+      type = 'savings'; category = 'emergency';
+    } else if (text.includes('HEALTH') || text.includes('PHARMACY') || text.includes('APOLLO')) {
+      type = 'expense'; category = 'health';
+    } else if (text.includes('ELECTRICITY') || text.includes('BESCOM') || text.includes('AIRTEL') || text.includes('ACT')) {
+      type = 'expense'; category = 'utilities';
+    }
+  }
+
+  return { type, category, description: cleanName || (isIncome ? 'Credit' : 'Debit') };
+}
+
+function renderStatementPreview(fileName) {
+  const dropZone = document.getElementById('statementDropZone');
+  const previewArea = document.getElementById('statementPreviewArea');
+  const bannerEl = document.getElementById('statementSummaryBanner');
+  const listEl = document.getElementById('statementTxnList');
+  const confirmBtn = document.getElementById('confirmStatementImportBtn');
+
+  dropZone.style.display = 'none';
+  previewArea.classList.remove('hidden');
+
+  let totalCredits = 0, totalDebits = 0, dupCount = 0;
+  parsedStatementTxns.forEach(t => {
+    if (t.type === 'income') totalCredits += t.amount;
+    else totalDebits += t.amount;
+    if (t.isDup) dupCount++;
+  });
+
+  const selectedCount = parsedStatementTxns.filter(t => t.selected).length;
+
+  bannerEl.innerHTML = `
+    <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);margin-bottom:4px">📄 ${fileName}</div>
+    <div style="font-size:1.1rem;font-weight:800;color:var(--text-primary);margin-bottom:8px">
+      ${parsedStatementTxns.length} Transactions Parsed <span style="font-size:0.75rem;color:var(--accent);font-weight:700">(${selectedCount} selected)</span>
+    </div>
+    <div style="display:flex;gap:12px;font-size:0.78rem;font-weight:700">
+      <span style="color:var(--income-color)">💰 Credits: ${fmt(totalCredits)}</span>
+      <span style="color:var(--expense-color)">💸 Debits: ${fmt(totalDebits)}</span>
+      ${dupCount > 0 ? `<span style="color:var(--loan-color)">⚠️ ${dupCount} duplicates</span>` : ''}
+    </div>
+  `;
+
+  listEl.innerHTML = '';
+  parsedStatementTxns.forEach((t, i) => {
+    const card = document.createElement('div');
+    card.className = `statement-txn-card ${t.isDup ? 'is-dup' : ''}`;
+    const cat = getCat(t.category);
+
+    card.innerHTML = `
+      <input type="checkbox" id="stmtchk_${i}" ${t.selected ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer" />
+      <div style="flex:1;min-width:0">
+        <div style="font-size:0.85rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${t.description} ${t.isDup ? '<span style="font-size:0.65rem;color:var(--loan-color);background:rgba(255,209,102,0.15);padding:1px 5px;border-radius:4px">Duplicate</span>' : ''}
+        </div>
+        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px">${fmtDate(t.date)} · ${t.type.toUpperCase()} · ${cat.label}</div>
+      </div>
+      <div style="font-size:0.9rem;font-weight:800;color:${t.type==='income'?'var(--income-color)':'var(--expense-color)'}">
+        ${t.type==='income'?'+':'-'}${fmt(t.amount)}
+      </div>
+    `;
+
+    const chk = card.querySelector(`#stmtchk_${i}`);
+    chk.onchange = (e) => {
+      parsedStatementTxns[i].selected = e.target.checked;
+      renderStatementPreview(fileName);
+    };
+
+    listEl.appendChild(card);
+  });
+
+  const toggleBtn = document.getElementById('toggleSelectAllBtn');
+  const allSelected = parsedStatementTxns.every(t => t.selected);
+  toggleBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+  toggleBtn.onclick = () => {
+    const nextState = !allSelected;
+    parsedStatementTxns.forEach(t => t.selected = nextState);
+    renderStatementPreview(fileName);
+  };
+
+  confirmBtn.onclick = () => confirmStatementImport();
+}
+
+function confirmStatementImport() {
+  const toImport = parsedStatementTxns.filter(t => t.selected);
+  if (toImport.length === 0) {
+    showToast('No transactions selected to import', '⚠️');
+    return;
+  }
+
+  toImport.forEach(t => {
+    STATE.transactions.push({
+      id: t.id,
+      amount: t.amount,
+      type: t.type,
+      category: t.category,
+      date: t.date,
+      description: t.description,
+      account: t.account,
+      notes: t.notes,
+      recurring: false,
+    });
+  });
+
+  saveData();
+  closeStatementImportModal();
+  renderPage();
+  showToast(`Successfully imported ${toImport.length} transactions! 🎉`, '✅');
 }
 
 document.addEventListener('DOMContentLoaded', init);

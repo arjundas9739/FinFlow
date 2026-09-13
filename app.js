@@ -334,6 +334,119 @@ function buildMonthNav(showYearly = false) {
 }
 
 // ══════════════════════════════════════
+// INTERACTIVE DRILLDOWN BREAKDOWN SHEET
+// ══════════════════════════════════════
+function openBreakdownSheet(config) {
+  // config: { title, periodLabel, type, categoryGroup, category, txns, month }
+  const modal = document.getElementById('financialBreakdownModal');
+  const titleEl = document.getElementById('breakdownTitle');
+  const bodyEl = document.getElementById('breakdownBody');
+  const closeBtn = document.getElementById('breakdownClose');
+
+  if (!modal || !bodyEl) return;
+
+  // Filter transactions based on config
+  let allPeriodTxns = config.txns || (STATE.currentPage === 'insights' ? getTxnsForPeriod() : txnsForMonth(config.month || STATE.currentMonth));
+  let filteredTxns = [...allPeriodTxns];
+
+  const needsCats = ['rent', 'utilities', 'groceries', 'health', 'education'];
+
+  if (config.type) {
+    filteredTxns = filteredTxns.filter(t => t.type === config.type);
+  } else if (config.categoryGroup === 'needs') {
+    filteredTxns = filteredTxns.filter(t => (t.type === 'expense' && needsCats.includes(t.category)) || t.type === 'loan');
+  } else if (config.categoryGroup === 'wants') {
+    filteredTxns = filteredTxns.filter(t => t.type === 'expense' && !needsCats.includes(t.category));
+  } else if (config.categoryGroup === 'investments') {
+    filteredTxns = filteredTxns.filter(t => t.type === 'investment' || t.type === 'savings');
+  } else if (config.category) {
+    filteredTxns = filteredTxns.filter(t => t.category === config.category);
+  }
+
+  const totalSum = filteredTxns.reduce((a, t) => a + t.amount, 0);
+
+  // Group by category for visual category breakdown progress bars
+  const catMap = {};
+  filteredTxns.forEach(t => {
+    catMap[t.category] = (catMap[t.category] || 0) + t.amount;
+  });
+  const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+
+  titleEl.textContent = config.title || 'Breakdown Details';
+
+  bodyEl.innerHTML = `
+    <!-- Top Summary Banner -->
+    <div style="background:var(--bg-card2);border:1px solid var(--border);border-radius:14px;padding:16px;text-align:center;margin-bottom:16px">
+      <div style="font-size:0.75rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">${config.periodLabel || 'Selected Period'} Summary</div>
+      <div style="font-family:var(--font-head);font-size:2.2rem;font-weight:800;color:var(--accent);margin-top:2px">${fmt(totalSum)}</div>
+      <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px">
+        <b>${filteredTxns.length}</b> transaction${filteredTxns.length === 1 ? '' : 's'} logged
+      </div>
+    </div>
+
+    <!-- Category Breakdown Bars -->
+    ${catEntries.length > 1 ? `
+      <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">Category Breakdown</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
+        ${catEntries.map(([catId, amt]) => {
+          const cat = getCat(catId);
+          const pct = totalSum > 0 ? ((amt / totalSum) * 100).toFixed(0) : 0;
+          return `
+            <div class="bd-cat-row" data-bdcat="${catId}" style="padding:8px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;cursor:pointer">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-size:0.83rem;font-weight:700;color:${cat.color}">${cat.label}</span>
+                <span style="font-size:0.83rem;font-weight:800">${fmt(amt)} <span style="font-size:0.72rem;color:var(--text-muted);font-weight:600">(${pct}%)</span></span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${cat.color}"></div></div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+
+    <!-- Transaction Line-Items List -->
+    <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">All Transactions (${filteredTxns.length})</div>
+    <div class="txn-list" id="breakdownTxnList"></div>
+  `;
+
+  const listEl = bodyEl.querySelector('#breakdownTxnList');
+  if (filteredTxns.length === 0) {
+    listEl.innerHTML = `<div class="empty-state" style="padding:20px 0"><div class="empty-state-icon">📭</div><p>No transactions found for this selection.</p></div>`;
+  } else {
+    filteredTxns.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).forEach(t => {
+      const item = buildTxnItem(t);
+      item.onclick = () => {
+        closeBreakdownSheet();
+        openTxnDetail(t.id);
+      };
+      listEl.appendChild(item);
+    });
+  }
+
+  // Allow clicking a category row inside the drilldown sheet to filter the list further
+  bodyEl.querySelectorAll('[data-bdcat]').forEach(row => {
+    row.onclick = (e) => {
+      const catId = e.currentTarget.dataset.bdcat;
+      const cat = getCat(catId);
+      openBreakdownSheet({
+        ...config,
+        category: catId,
+        title: `${cat.label} Details`,
+      });
+    };
+  });
+
+  modal.classList.remove('hidden');
+  closeBtn.onclick = closeBreakdownSheet;
+  modal.onclick = (e) => { if (e.target === modal) closeBreakdownSheet(); };
+}
+
+function closeBreakdownSheet() {
+  const modal = document.getElementById('financialBreakdownModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+// ══════════════════════════════════════
 // DASHBOARD
 // ══════════════════════════════════════
 function renderDashboard() {
@@ -355,11 +468,11 @@ function renderDashboard() {
     <div class="balance-amount">${balSign}${fmt(s.balance)}</div>
     <div class="balance-month">💾 Savings rate: <b style="color:#06d6a0">${savRate}%</b></div>
     <div class="balance-chips">
-      <div class="balance-chip">
+      <div class="balance-chip" id="dashIncomeChip">
         <div class="chip-label">💰 Credits</div>
         <div class="chip-value income-c">${fmtShort(s.income)}</div>
       </div>
-      <div class="balance-chip">
+      <div class="balance-chip" id="dashExpenseChip">
         <div class="chip-label">💸 Debits</div>
         <div class="chip-value expense-c">${fmtShort(s.expense)}</div>
       </div>
@@ -367,18 +480,27 @@ function renderDashboard() {
   `;
   el.appendChild(bc);
 
+  // Wire Balance Card Chips
+  setTimeout(() => {
+    const incBtn = bc.querySelector('#dashIncomeChip');
+    if (incBtn) incBtn.onclick = () => openBreakdownSheet({ type: 'income', title: 'Income & Credits Breakdown', periodLabel: monthLabel(ym), month: ym });
+    const expBtn = bc.querySelector('#dashExpenseChip');
+    if (expBtn) expBtn.onclick = () => openBreakdownSheet({ type: 'expense', title: 'Expenses & Debits Breakdown', periodLabel: monthLabel(ym), month: ym });
+  }, 0);
+
   // Stats grid
   const grid = document.createElement('div');
   grid.className = 'stats-grid';
   const stats = [
-    { icon:'📈', label:'Investments', value:s.investment, color:'var(--invest-color)' },
-    { icon:'🏦', label:'Loan / EMI',  value:s.loan,       color:'var(--loan-color)' },
-    { icon:'🏧', label:'Savings',     value:s.savings,    color:'var(--savings-color)' },
-    { icon:'📦', label:'Transactions',value:txnsForMonth(ym).length, color:'var(--text-primary)', raw:true },
+    { icon:'📈', label:'Investments', value:s.investment, color:'var(--invest-color)', fn: () => openBreakdownSheet({ type: 'investment', title: 'Investments Breakdown', periodLabel: monthLabel(ym), month: ym }) },
+    { icon:'🏦', label:'Loan / EMI',  value:s.loan,       color:'var(--loan-color)',       fn: () => openBreakdownSheet({ type: 'loan', title: 'Loans & EMI Repayments Breakdown', periodLabel: monthLabel(ym), month: ym }) },
+    { icon:'🏧', label:'Savings',     value:s.savings,    color:'var(--savings-color)',    fn: () => openBreakdownSheet({ type: 'savings', title: 'Savings & Deposits Breakdown', periodLabel: monthLabel(ym), month: ym }) },
+    { icon:'📦', label:'Transactions',value:txnsForMonth(ym).length, color:'var(--text-primary)', raw:true, fn: () => navigate('transactions') },
   ];
   stats.forEach(st=>{
     const card = document.createElement('div');
     card.className = 'stat-card';
+    card.onclick = st.fn;
     card.innerHTML = `
       <div class="stat-card-accent" style="background:${st.color}"></div>
       <div class="stat-icon">${st.icon}</div>
@@ -431,6 +553,8 @@ function buildTopCatsCard(ym) {
     const cat = getCat(id);
     const pct = ((amount/total)*100).toFixed(0);
     const div = document.createElement('div');
+    div.className = 'bd-cat-row';
+    div.onclick = () => openBreakdownSheet({ category: id, title: `${cat.label} Details`, periodLabel: monthLabel(ym), month: ym });
     div.innerHTML=`
       <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
         <span style="font-size:0.83rem;font-weight:600;">${cat.label}</span>
@@ -990,11 +1114,17 @@ function renderInsights() {
   let modeLabel = mode === 'monthly' ? monthLabel(STATE.currentMonth) : (mode === 'quarterly' ? `${STATE.insightQuarter} ${STATE.insightYear}` : (mode === 'yearly' ? `Year ${STATE.insightYear}` : `Custom Range`));
   banner.innerHTML = `
     <div class="balance-label">📊 ${modeLabel} Financial Overview</div>
-    <div class="balance-amount">${s.net >= 0 ? '' : '-'}${fmt(Math.abs(s.net))}</div>
+    <div class="balance-amount" id="insightNetBal" style="cursor:pointer">${s.net >= 0 ? '' : '-'}${fmt(Math.abs(s.net))}</div>
     <div class="balance-month">${s.net >= 0 ? 'Net Surplus saved' : 'Deficit / Overspent'}</div>
     <div class="balance-chips">
-      <div class="balance-chip"><div class="chip-label">💰 Credit (Income)</div><div class="chip-value income-c">${fmtShort(s.income)}</div></div>
-      <div class="balance-chip"><div class="chip-label">💸 Debit (Expense)</div><div class="chip-value expense-c">${fmtShort(s.expense)}</div></div>
+      <div class="balance-chip" id="insightIncomeChip">
+        <div class="chip-label">💰 Credit (Income)</div>
+        <div class="chip-value income-c">${fmtShort(s.income)}</div>
+      </div>
+      <div class="balance-chip" id="insightExpenseChip">
+        <div class="chip-label">💸 Debit (Expense)</div>
+        <div class="chip-value expense-c">${fmtShort(s.expense)}</div>
+      </div>
     </div>
   `;
   el.appendChild(banner);
@@ -1012,17 +1142,17 @@ function renderInsights() {
   const ratioGrid = document.createElement('div');
   ratioGrid.className = 'ratio-grid';
   ratioGrid.innerHTML = `
-    <div class="ratio-card">
+    <div class="ratio-card" id="wealthRateCard" style="cursor:pointer">
       <div class="ratio-label">Wealth Rate</div>
       <div class="ratio-val" style="color:${savRate >= 20 ? 'var(--income-color)' : savRate >= 10 ? 'var(--loan-color)' : 'var(--expense-color)'}">${savRate.toFixed(0)}%</div>
       <div class="ratio-sub">${savRate >= 20 ? 'Target ≥20% 🎯' : 'Low savings ⚠️'}</div>
     </div>
-    <div class="ratio-card">
+    <div class="ratio-card" id="dtiCard" style="cursor:pointer">
       <div class="ratio-label">EMI / Debt Ratio</div>
       <div class="ratio-val" style="color:${dtiRate <= 35 ? 'var(--income-color)' : dtiRate <= 50 ? 'var(--loan-color)' : 'var(--expense-color)'}">${dtiRate.toFixed(0)}%</div>
       <div class="ratio-sub">${dtiRate <= 35 ? 'Safe <35% 🟢' : 'High Debt 🔴'}</div>
     </div>
-    <div class="ratio-card">
+    <div class="ratio-card" id="emergencyCard" style="cursor:pointer">
       <div class="ratio-label">Emergency Fund</div>
       <div class="ratio-val" style="color:${runwayMonths >= 6 ? 'var(--income-color)' : runwayMonths >= 3 ? 'var(--loan-color)' : 'var(--expense-color)'}">${runwayMonths}m</div>
       <div class="ratio-sub">Covered months</div>
@@ -1049,15 +1179,15 @@ function renderInsights() {
   ruleCard.className = 'rule-card';
   ruleCard.innerHTML = `
     <div class="card-header"><span class="card-title">50 / 30 / 20 Budget Rule Check</span><span class="insight-badge badge-purple">Standard Rule</span></div>
-    <div class="rule-row">
+    <div class="rule-row" id="ruleNeedsRow" style="cursor:pointer">
       <div class="rule-header"><span style="color:#00d4aa">🏠 Needs (${needsPct}% / 50%)</span><span>${fmt(needsTotal)}</span></div>
       <div class="progress-bar"><div class="progress-fill ${needsPct > 55 ? 'danger' : ''}" style="width:${needsPct}%;background:#00d4aa"></div></div>
     </div>
-    <div class="rule-row">
+    <div class="rule-row" id="ruleWantsRow" style="cursor:pointer">
       <div class="rule-header"><span style="color:#ff6b6b">🛍️ Wants (${wantsPct}% / 30%)</span><span>${fmt(wantsTotal)}</span></div>
       <div class="progress-bar"><div class="progress-fill ${wantsPct > 35 ? 'warning' : ''}" style="width:${wantsPct}%;background:#ff6b6b"></div></div>
     </div>
-    <div class="rule-row">
+    <div class="rule-row" id="ruleInvestRow" style="cursor:pointer">
       <div class="rule-header"><span style="color:#6c63ff">📈 Investments (${investPct}% / 20%)</span><span>${fmt(investTotal)}</span></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${investPct}%;background:#6c63ff"></div></div>
     </div>
@@ -1085,6 +1215,30 @@ function renderInsights() {
 
   // Render Charts after DOM mount
   setTimeout(() => {
+    // Wire Banner Chips & Net Bal
+    const incChip = banner.querySelector('#insightIncomeChip');
+    if (incChip) incChip.onclick = () => openBreakdownSheet({ type: 'income', title: 'Credit (Income) Breakdown', periodLabel: modeLabel, txns });
+    const expChip = banner.querySelector('#insightExpenseChip');
+    if (expChip) expChip.onclick = () => openBreakdownSheet({ type: 'expense', title: 'Debit (Expense) Breakdown', periodLabel: modeLabel, txns });
+    const netBal = banner.querySelector('#insightNetBal');
+    if (netBal) netBal.onclick = () => openBreakdownSheet({ title: 'Full Financial Breakdown', periodLabel: modeLabel, txns });
+
+    // Wire Health Ratio cards
+    const wealthCard = ratioGrid.querySelector('#wealthRateCard');
+    if (wealthCard) wealthCard.onclick = () => openBreakdownSheet({ categoryGroup: 'investments', title: 'Investments & Savings Breakdown', periodLabel: modeLabel, txns });
+    const dtiC = ratioGrid.querySelector('#dtiCard');
+    if (dtiC) dtiC.onclick = () => openBreakdownSheet({ type: 'loan', title: 'Loans & EMI Repayments Breakdown', periodLabel: modeLabel, txns });
+    const emgC = ratioGrid.querySelector('#emergencyCard');
+    if (emgC) emgC.onclick = () => openBreakdownSheet({ type: 'savings', title: 'Savings & Emergency Fund Breakdown', periodLabel: modeLabel, txns });
+
+    // Wire 50/30/20 Rule Rows
+    const needsR = ruleCard.querySelector('#ruleNeedsRow');
+    if (needsR) needsR.onclick = () => openBreakdownSheet({ categoryGroup: 'needs', title: 'Needs & Mandatory Expenses Breakdown', periodLabel: modeLabel, txns });
+    const wantsR = ruleCard.querySelector('#ruleWantsRow');
+    if (wantsR) wantsR.onclick = () => openBreakdownSheet({ categoryGroup: 'wants', title: 'Wants & Discretionary Expenses Breakdown', periodLabel: modeLabel, txns });
+    const investR = ruleCard.querySelector('#ruleInvestRow');
+    if (investR) investR.onclick = () => openBreakdownSheet({ categoryGroup: 'investments', title: 'Investments & Savings Breakdown', periodLabel: modeLabel, txns });
+
     // 1. Cashflow Stacked Bar Chart
     const typesData = [s.income, s.expense, s.investment, s.loan, s.savings];
     new Chart(cfCanvas, {
